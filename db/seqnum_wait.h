@@ -63,7 +63,8 @@
 #define MILLISEC 1000
 enum seqnum_wait_state{
     INIT,
-    GOT_ACK,
+    FIRST_ACK,
+    GOT_FIRST_ACK,
     DONE_WAIT
 }
 struct seqnum_wait{
@@ -84,6 +85,10 @@ struct seqnum_wait{
     int outrc;
     int num_incoh;
     int next_ts;              // timestamp in the future when this item has to be "worked" on
+    int previous_ts;          // timestamp of the last time this item was "worked" on  
+    int reset_wait_time; 
+    int remaining_wait_time;
+    struct timespec wait_time;
     int begin_time , end_time;
     int we_used;
     const char *base_node;
@@ -101,7 +106,7 @@ struct seqnum_wait{
     int *timeoutms;
     uint64_t txnsize;
     int newcoh;
-
+    int got_ack_from_atleast_one_node;
     LINKC_T(struct seqnum_wait) lsn_lnk;
     LINKC_T(struct seqnum_wait) absolute_ts_lnk;
 };
@@ -111,7 +116,7 @@ typedef struct{
     pthread_cond_t got_new_item_cond;
     int size;
     LISTC_T(struct seqnum_wait) lsn_list;
-    LISTC_T(struct seqnum_wait) absolute_ts_lnk;
+    LISTC_T(struct seqnum_wait) absolute_ts_list;
 }seqnum_wait_queue;
 // Add work item to seqnum_wait_queue.
 int add_to_seqnum_wait_queue(struct ireq *iq, bdb_state_type *bdb_state, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh);
