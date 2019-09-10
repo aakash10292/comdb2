@@ -113,7 +113,7 @@ struct seqnum_wait{
 
 typedef struct{
     pthread_mutex_t mutex;
-    pthread_cond_t got_new_item_cond;
+    pthread_cond_t cond;
     int size;
     LISTC_T(struct seqnum_wait) lsn_list;
     LISTC_T(struct seqnum_wait) absolute_ts_list;
