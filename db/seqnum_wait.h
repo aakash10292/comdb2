@@ -117,6 +117,7 @@ typedef struct{
     int size;
     LISTC_T(struct seqnum_wait) lsn_list;
     LISTC_T(struct seqnum_wait) absolute_ts_list;
+    uint64_t next_commit_timestamp;
 }seqnum_wait_queue;
 // Add work item to seqnum_wait_queue.
 int add_to_seqnum_wait_queue(struct ireq *iq, bdb_state_type *bdb_state, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh);
