@@ -65,7 +65,8 @@ enum seqnum_wait_state{
     INIT,
     FIRST_ACK,
     GOT_FIRST_ACK,
-    DONE_WAIT
+    DONE_WAIT,
+    COMMIT
 }
 struct seqnum_wait{
     enum seqnum_wait_state cur_state;           // Cur state of the work item designating progress made on this work item. 

@@ -22,11 +22,7 @@ static struct seqnum_wait *allocate_seqnum_wait(void){
 int seqnum_wait_gbl_mem_init(){
     work_queue = (seqnum_wait_queue *)malloc(sizeof(seqnum_wait_queue));
     if(work_queue == NULL){
-        return -1;
-    }
-    Pthread_mutex_init(&work_queue->mutex, NULL);
-    Pthread_cond_init(&work_queue->got_new_item_cond, NULL);
-    work_queue->size = 0;
+
     work_queue->next_commit_timestamp = INT_MIN;
     listc_init(&work_queue->lsn_list, offsetof(struct seqnum_wait, lsn_lnk));
     listc_init(&work_queue->absolute_ts_list, offsetof(struct seqnum_wait, absolute_ts_lnk));
@@ -387,11 +383,24 @@ void process_work_item(struct seqnum_wait *item){
                                             "was %s",
                                     item->nodelist[i],item->base_node);
                             item->numfailed++;
+                            // Extract seqnum
+                            Pthread_mutex_lock(&(item->bdb_state->seqnum_info->lock));
+                            item->nodegen = item->bdb_state->seqnum_info->seqnums[nodeix(item->nodelist[i])].generation;
+                            item->nodelsn = item->bdb_state->seqnum_info->seqnums[nodeix(item->nodelist[i])].lsn;
+                            Pthread_mutex_unlock(&(item->bdb_state->seqnum_info->lock));
                             // We now mark the node incoherent
                             Pthread_mutex_lock(&(bdb_state->coherent_state_lock));
                             if(item->bdb_state->coherent_state[nodeix(nodelist[i])] == STATE_COHERENT){
                                 defer_commits(item->bdb_state, item->nodelist[i], __func__);
-                                set_coherent_state(item->bdb_state, item->nodelist[i], STATE_INCOHERENT,__func__, __line__);
+                                if(item->bdb_state->attr->catchup_on_commit && catchup_window){
+                                    item->masterlsn = &(item->bdb_state->seqnum_info->seqnums[nodiex(item->bdb_state->repinfo->master_host)].lsn);
+                                    item->cntbytes = subtract_lsn(item->bdb_state, item->masterlsn, &(item->nodelsn));
+                                    set_coherent_state(item->bdb_state, item->nodelist[i], (item->cntbytes < catchup_window)?STATE_INCOHERENT_WAIT: STATE_INCOHERENT,__func__, __line__);
+   
+                                }
+                                else{
+                                    set_coherent_state(item->bdb_state, item->nodelist[i], STATE_INCOHERENT,__func__, __line__);
+                                }
                                 // change next_commit_timestamp for the work queue, if new value of coherency_commit_timestamp is larger,
                                 //  than current value of coherency_commit_timestamp 
                                 work_queue->next_commit_timestamp = (work_queue->next_commit_timestamp < coherency_commit_timestamp)?coherency_commit_timestamp:work_queue->next_commit_timestamp;
@@ -410,7 +419,7 @@ void process_work_item(struct seqnum_wait *item){
                 }
             }
         case DONE_WAIT:
-            if (!numfailed && !numskip && !numwait &&
+            if (!item->numfailed && !item->numskip && !item->numwait &&
                 item->bdb_state->attr->remove_commitdelay_on_coherent_cluster &&
                 item->bdb_state->attr->commitdelay) {
                 logmsg(LOGMSG_INFO, "Cluster is in sync, removing commitdelay\n");
@@ -496,6 +505,19 @@ void process_work_item(struct seqnum_wait *item){
                         calc_lsn.file, calc_lsn.offset, calc_gen);
                 }
             }
+            int now = comdb2_time_epochms;
+            Pthread_mutex_lock(&(work_queue->mutex));
+            if(now > work_queue->next_commit_timestamp){
+                item->cur_state = COMMIT;
+                goto case COMMIT;
+            }
+            else{
+                item->cur_state = COMMIT;
+                add_to_absolute_ts_list(item, commit_time);
+            }
+            Pthread_mutex_unlock(&(work_queue->mutex));
+        case COMMIT:
+            
     }
 }
 
