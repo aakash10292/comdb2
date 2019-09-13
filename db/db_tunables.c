@@ -38,7 +38,6 @@
 #define COMPOSITE_TUNABLE_SEP '.'
 
 extern int gbl_allow_lua_print;
-extern int gbl_allow_lua_exec_with_ddl;
 extern int gbl_allow_lua_dynamic_libs;
 extern int gbl_allow_pragma;
 extern int gbl_berkdb_epochms_repts;
@@ -206,6 +205,7 @@ extern int gbl_client_heartbeat_ms;
 extern int gbl_rep_wait_release_ms;
 extern int gbl_rep_wait_core_ms;
 extern int gbl_random_get_curtran_failures;
+extern int gbl_random_thdpool_work_timeout;
 extern int gbl_fail_client_write_lock;
 extern int gbl_instrument_dblist;
 extern int gbl_replicated_truncate_timeout;
@@ -221,8 +221,18 @@ extern int gbl_flush_log_at_checkpoint;
 extern int gbl_online_recovery;
 extern int gbl_forbid_remote_admin;
 extern int gbl_abort_on_dta_lookup_error;
+extern int gbl_osql_snap_info_hashcheck;
 extern int gbl_debug_children_lock;
 extern int gbl_serialize_reads_like_writes;
+extern int gbl_long_log_truncation_warn_thresh_sec;
+extern int gbl_long_log_truncation_abort_thresh_sec;
+extern int gbl_snapshot_serial_verify_retry;
+extern int gbl_cache_flush_interval;
+extern int gbl_load_cache_threads;
+extern int gbl_load_cache_max_pages;
+extern int gbl_dump_cache_max_pages;
+extern int gbl_max_pages_per_cache_thread;
+extern int gbl_memp_dump_cache_threshold;
 
 extern long long sampling_threshold;
 
@@ -301,6 +311,11 @@ extern int gbl_selectv_writelock;
 int gbl_debug_tmptbl_corrupt_mem;
 
 extern int gbl_clean_exit_on_sigterm;
+extern int gbl_debug_omit_dta_write;
+extern int gbl_debug_omit_idx_write;
+extern int gbl_debug_omit_blob_write;
+
+int gbl_page_order_table_scan = 0;
 
 /*
   =========================================================
@@ -577,6 +592,15 @@ static int memnice_update(void *context, void *value)
     return 0;
 }
 
+int dtastripe_verify(void *context, void *stripes)
+{
+    int iStripes = *(int *)stripes;
+    if ((iStripes < 1) || (iStripes > 16)) {
+        return 1;
+    }
+    return 0;
+}
+
 static int maxretries_verify(void *context, void *value)
 {
     if (*(int *)value < 2) {
@@ -680,7 +704,6 @@ static int broken_max_rec_sz_update(void *context, void *value)
            COMDB2_MAX_RECORD_SIZE + gbl_broken_max_rec_sz);
     return 0;
 }
-
 
 static int netconndumptime_update(void *context, void *value)
 {
@@ -825,6 +848,20 @@ static int pbkdf2_iterations_update(void *context, void *value)
 {
     (void)context;
     return set_pbkdf2_iterations(*(int *)value);
+}
+
+static int page_order_table_scan_update(void *context, void *value)
+{
+    if ((*(int *)value) == 0) {
+        gbl_page_order_table_scan = 0;
+    } else {
+        gbl_page_order_table_scan = 1;
+    }
+    bdb_attr_set(thedb->bdb_attr, BDB_ATTR_PAGE_ORDER_TABLESCAN,
+                 gbl_page_order_table_scan);
+    logmsg(LOGMSG_USER, "Page order table scan set to %s.\n",
+           (gbl_page_order_table_scan) ? "on" : "off");
+    return 0;
 }
 
 /* Routines for the tunable system itself - tunable-specific

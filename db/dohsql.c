@@ -150,7 +150,7 @@ static void sqlengine_work_shard_pp(struct thdpool *pool, void *work,
     case THD_FREE:
         /* error, we are done */
         clnt->query_rc = -1;
-        clnt->done = 1;
+        signal_clnt_as_done(clnt);
         break;
     }
 }
@@ -1088,10 +1088,6 @@ static void _shard_disconnect(dohsql_connector_t *conn)
     free(clnt->sql);
     clnt->sql = NULL;
     cleanup_clnt(clnt);
-    Pthread_mutex_destroy(&clnt->wait_mutex);
-    Pthread_cond_destroy(&clnt->wait_cond);
-    Pthread_mutex_destroy(&clnt->write_lock);
-    Pthread_mutex_destroy(&clnt->dtran_mtx);
     free(clnt);
 }
 
@@ -1450,9 +1446,20 @@ static int _cmp(dohsql_t *conns, int idx_a, int idx_b)
         b = conns->conns[order[idx_b]].que->lst.top->obj;
 
         for (i = 0; i < conns->order_size /*conns->ncols*/; i++) {
-            ret = sqlite3MemCompare(&a[i], &b[i], NULL);
+            int orderby_idx = (conns->order_dir[i] > 0)
+                                  ? conns->order_dir[i]
+                                  : (-conns->order_dir[i]);
+            assert(orderby_idx > 0);
+            orderby_idx--;
+            if (gbl_dohsql_verbose) {
+                extern char *print_mem(Mem * m);
+                logmsg(LOGMSG_USER, "%lu COMPARE %s <> %s\n", pthread_self(),
+                       print_mem(&a[orderby_idx]), print_mem(&b[orderby_idx]));
+            }
+
+            ret = sqlite3MemCompare(&a[orderby_idx], &b[orderby_idx], NULL);
             if (ret) {
-                if (conns->order_dir[i])
+                if (conns->order_dir[i] < 0)
                     ret = -ret;
                 break;
             }
@@ -1739,6 +1746,11 @@ int order_init(dohsql_t *conns, dohsql_node_t *node)
 int dohsql_is_parallel_shard(void)
 {
     GET_CLNT;
+    /* exclude statements that do not arrive
+       by a supported plugin */
+    if (!clnt->plugin.write_response)
+        return 1;
+
     return (clnt->conns || DOHSQL_CLIENT);
 }
 

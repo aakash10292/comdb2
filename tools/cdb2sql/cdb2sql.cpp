@@ -152,46 +152,45 @@ static const char *usage_text =
     " * Query db by connecting to a specific server:\n"
     "     cdb2sql mydb --host node1 'select 1'\n"
     " * Query db by connecting to a known set of servers/ports:\n"
-    "     cdb2sql mydb @node1:port=19007,node2:port=19000 'select 1'\n";
+    "     cdb2sql mydb @node1:port=19007,node2:port=19000 'select 1'\n"
+    "\n"
+    "Interactive session commands:\n"
+    "@cdb2_close          Close connection (calls cdb2_close())\n"
+    "@desc      tblname   Describe a table\n"
+    "@hexblobs            Display blobs in hexadecimal format\n"
+    "@ls        tables    List tables\n"
+    "@ls        systables List system tables\n"
+    "@ls        views     List views\n"
+    "@redirect  [file]    Redirect output to a file\n"
+    "@row_sleep number    Sleep for this many secs between printing rows\n"
+    "@send      command   Send a command via 'sys.cmd.send()'\n"
+    "@strblobs            Display blobs as strings\n"
+    "@time                Toggle between time modes\n";
 
-void cdb2sql_usage(int exit_val)
+void cdb2sql_usage(const int exit_val)
 {
     fputs(usage_text, (exit_val == EXIT_SUCCESS) ? stdout : stderr);
     exit(exit_val);
 }
 
 const char *level_one_words[] = {
-  "@",
-  "ALTER", "ANALYZE",
-  "BEGIN",
-  "COMMIT",
-  "CREATE",
-  "DELETE", "DROP", "DRYRUN",
-  "EXEC", "EXPLAIN",
-  "INSERT",
-  "PUT",
-  "REBUILD",
-  "ROLLBACK",
-  "SELECT", "SELECTV", "SET",
-  "TRUNCATE",
-  "UPDATE",
-  "WITH", NULL,  // must be terminated by NULL
+    "@",        "ALTER",  "ANALYZE", "BEGIN",   "COMMIT",   "CREATE", "DELETE",
+    "DROP",     "DRYRUN", "EXEC",    "EXPLAIN", "INSERT",   "PUT",    "REBUILD",
+    "ROLLBACK", "SELECT", "SELECTV", "SET",     "TRUNCATE", "UPDATE", "WITH",
 };
 
 const char *char_atglyph_words[] = {
-    "desc", "ls", "send", NULL, // must be terminated by NULL
+    "cdb2_close", "desc", "hexblobs", "ls",   "redirect",
+    "row_sleep",  "send", "strblobs", "time",
 };
 
-static char *char_atglyph_generator(const char *text, int state)
+static char *char_atglyph_generator(const char *text, const int state)
 {
-    static int list_index, len;
-    const char *name;
+    static int len;
     if (!state) { // if state is 0 get the length of text
-        list_index = 0;
         len = strlen(text);
     }
-    while ((name = char_atglyph_words[list_index]) != NULL) {
-        list_index++;
+    for (const auto &name : char_atglyph_words) {
         if (len == 0 || strncasecmp(name, text, len) == 0) {
             return strdup(name);
         }
@@ -200,24 +199,21 @@ static char *char_atglyph_generator(const char *text, int state)
 }
 
 // Generator function for word completion.
-static char *level_one_generator(const char *text, int state)
+static char *level_one_generator(const char *text, const int state)
 {
-    static int list_index, len;
-    const char *name;
+    static int len;
     if (!state) { //if state is 0 get the length of text
-        list_index = 0;
         len = strlen (text);
     }
-    while ((name = level_one_words[list_index]) != NULL) {
-        list_index++;
-        if (len == 0 || strncasecmp (name, text, len) == 0) {
-            return strdup (name);
+    for (const auto &name : level_one_words) {
+        if (len == 0 || strncasecmp(name, text, len) == 0) {
+            return strdup(name);
         }
     }
     return (NULL); // If no names matched, then return NULL.
 }
 
-static char *db_generator(int state, const char *sql)
+static char *db_generator(const int state, const char *sql)
 {
     static char **db_words;
     static int list_index, len;
@@ -298,7 +294,7 @@ static char *db_generator(int state, const char *sql)
     return (NULL); // If no names matched, then return NULL.
 }
 
-static char *tunables_generator(const char *text, int state)
+static char *tunables_generator(const char *text, const int state)
 {
     char sql[256];
     if (*text)
@@ -313,7 +309,7 @@ static char *tunables_generator(const char *text, int state)
     return db_generator(state, sql);
 }
 
-static char *generic_generator_no_systables(const char *text, int state)
+static char *generic_generator_no_systables(const char *text, const int state)
 {
     char sql[256];
     snprintf(sql, sizeof(sql),
@@ -324,7 +320,7 @@ static char *generic_generator_no_systables(const char *text, int state)
     return db_generator(state, sql);
 }
 
-static char *generic_generator(const char *text, int state)
+static char *generic_generator(const char *text, const int state)
 {
     char sql[256];
     //TODO: escape text
@@ -614,6 +610,27 @@ extern void REPORT_COSTS(void);
 static void (*enable_costs)(void) = ENABLE_COSTS;
 static void (*report_costs)(void) = REPORT_COSTS;
 
+int list_tables()
+{
+    int start_time_ms, run_time_ms;
+    const char *sql = "SELECT tablename FROM comdb2_tables order by tablename";
+    return run_statement(sql, 0, NULL, &start_time_ms, &run_time_ms);
+}
+
+int list_systables()
+{
+    int start_time_ms, run_time_ms;
+    const char *sql = "SELECT name FROM comdb2_systables order by name";
+    return run_statement(sql, 0, NULL, &start_time_ms, &run_time_ms);
+}
+
+int list_views()
+{
+    int start_time_ms, run_time_ms;
+    const char *sql = "SELECT name FROM comdb2_views order by name";
+    return run_statement(sql, 0, NULL, &start_time_ms, &run_time_ms);
+}
+
 static int process_escape(const char *cmdstr)
 {
     char copy[256];
@@ -686,14 +703,11 @@ static int process_escape(const char *cmdstr)
     } else if ((strcasecmp(tok, "ls") == 0) || (strcasecmp(tok, "list") == 0)) {
         tok = strtok_r(NULL, delims, &lasts);
         if (!tok || strcasecmp(tok, "tables") == 0) {
-            int start_time_ms, run_time_ms;
-            const char *sql =
-                "SELECT tablename FROM comdb2_tables order by tablename";
-            run_statement(sql, 0, NULL, &start_time_ms, &run_time_ms);
+            list_tables();
         } else if (strcasecmp(tok, "systables") == 0) {
-            int start_time_ms, run_time_ms;
-            const char *sql = "SELECT name FROM comdb2_systables order by name";
-            run_statement(sql, 0, NULL, &start_time_ms, &run_time_ms);
+            list_systables();
+        } else if (strcasecmp(tok, "views") == 0) {
+            list_views();
         } else {
             fprintf(stderr, "unknown @ls sub-command %s\n", tok);
             return -1;
@@ -703,13 +717,15 @@ static int process_escape(const char *cmdstr)
         if (tok) {
             int start_time_ms, run_time_ms;
             char sql[1024];
-            snprintf(sql, sizeof(sql) - 1, "EXEC PROCEDURE sys.cmd.send('%s')", tok);
+            snprintf(sql, sizeof(sql) - 1, "EXEC PROCEDURE sys.cmd.send('%s')",
+                     tok);
             run_statement(sql, 0, NULL, &start_time_ms, &run_time_ms);
         } else {
             fprintf(stderr, "need command to @send\n");
             return -1;
         }
-    } else if ((strcasecmp(tok, "desc") == 0) || (strcasecmp(tok, "describe") == 0)) {
+    } else if ((strcasecmp(tok, "desc") == 0) ||
+               (strcasecmp(tok, "describe") == 0)) {
         tok = strtok_r(NULL, delims, &lasts);
         if (!tok) {
             fprintf(stderr, "table name required\n");
@@ -1154,7 +1170,7 @@ int process_bind(const char *sql)
 
     if (debug_trace)
         fprintf(stderr, "binding: type %d, param %s, value %s\n", type,
-                parameter, value);
+                parameter, sql /* sql now points to the actual value. */);
     if (isdigit(parameter[0])) {
         int index = atoi(parameter);
         if (index <= 0)
@@ -1174,7 +1190,6 @@ static int run_statement(const char *sql, int ntypes, int *types,
     int ncols;
     int col;
     FILE *out = stdout;
-    char cmd[60];
     int startms = now_ms();
 
     if (printmode & DISP_STDERR)
@@ -1224,43 +1239,6 @@ static int run_statement(const char *sql, int ntypes, int *types,
             if (rc) {
                 fprintf(stderr, "failed to run set getcost 1\n");
                 return 1;
-            }
-        }
-
-        /*
-          Check and set user and password if they have been specified using
-          the environment variables.
-
-          Note: It is good to report the user about the use of environment
-          variables to set user/password to avoid any surprises.
-        */
-        if (getenv("COMDB2_USER")) {
-            int length = snprintf(cmd, sizeof(cmd), "set user %s",
-                                  getenv("COMDB2_USER"));
-            if (length >= sizeof(cmd)) {
-                fprintf(stderr, "COMDB2_USER too long, ignored\n");
-            } else if ((length < 0) ||
-                       ((cdb2_run_statement(cdb2h, cmd)) != 0)) {
-                fprintf(stderr, "Failed to set user using COMDB2_USER, "
-                                "exiting\n");
-                return 1;
-            } else {
-                printf("Set user using COMDB2_USER\n");
-            }
-        }
-
-        if (getenv("COMDB2_PASSWORD")) {
-            int length = snprintf(cmd, sizeof(cmd), "set password %s",
-                                  getenv("COMDB2_PASSWORD"));
-            if (length >= sizeof(cmd)) {
-                fprintf(stderr, "COMDB2_PASSWORD too long, ignored\n");
-            } else if ((length < 0) ||
-                       ((cdb2_run_statement(cdb2h, cmd)) != 0)) {
-                fprintf(stderr, "Failed to set password using "
-                                "COMDB2_PASSWORD, exiting\n");
-                return 1;
-            } else {
-                printf("Set password using COMDB2_PASSWORD\n");
             }
         }
     }

@@ -983,6 +983,7 @@ done:
     if (run) {
         Pthread_rwlock_unlock(&views_lk);
         unlock_schema_lk();
+        csc2_free_all();
         BDB_RELLOCK();
         bdb_thread_event(thedb->bdb_env, BDBTHR_EVENT_DONE_RDWR);
 
@@ -1161,6 +1162,7 @@ done:
     if (run) {
         Pthread_rwlock_unlock(&views_lk);
         unlock_schema_lk();
+        csc2_free_all();
         bdb_thread_event(thedb->bdb_env, BDBTHR_EVENT_DONE_RDWR);
 
         /*  schedule next */
@@ -1220,6 +1222,7 @@ void *_view_cron_phase3(struct cron_event *event, struct errstat *err)
 
         Pthread_rwlock_unlock(&views_lk);
         unlock_schema_lk();
+        csc2_free_all();
         BDB_RELLOCK();
         bdb_thread_event(thedb->bdb_env, BDBTHR_EVENT_DONE_RDWR);
     }
@@ -2068,7 +2071,7 @@ static int _view_rollout_publish(void *tran, timepart_view_t *view,
     rc = views_write_view(tran, view->name, view_str);
     if (rc != VIEW_NOERR) {
         errstat_set_strf(err, "Failed to llmeta save view %s", view->name);
-        errstat_set_rc(err, err->errval = VIEW_ERR_LLMETA);
+        errstat_set_rc(err, VIEW_ERR_LLMETA);
         goto done;
     }
 
