@@ -91,7 +91,7 @@
 #include "views.h"
 #include "logmsg.h"
 #include "time_accounting.h"
-
+#include <seqnum_wait.h>
 int (*comdb2_ipc_master_set)(char *host) = 0;
 
 /* ixrc != -1 is incorrect. Could be IX_PASTEOF or IX_EMPTY.
@@ -604,6 +604,7 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
     int rc = 0;
     int sync;
     int start_ms, end_ms;
+    int enqueued = 0;
 
     if (iq->sc_pending) {
         sync = REP_SYNC_FULL;
@@ -643,14 +644,38 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
 
     case REP_SYNC_FULL:
         iq->gluewhere = "bdb_wait_for_seqnum_from_all";
-        if (adaptive)
-            rc = bdb_wait_for_seqnum_from_all_adaptive_newcoh(
-                bdb_handle, (seqnum_type *)ss, iq->txnsize, &iq->timeoutms);
-        else if (timeoutms == -1)
-            rc = bdb_wait_for_seqnum_from_all(bdb_handle, (seqnum_type *)ss);
-        else
-            rc = bdb_wait_for_seqnum_from_all_timeout(
-                bdb_handle, (seqnum_type *)ss, timeoutms);
+        extern int gbl_seqnum_wait_init_success;
+        extern int from_purge_old_files;
+        // Don't want to enter here while purging old files.. Wait sequentially for that 
+        if(!from_purge_old_files && gbl_seqnum_wait_init_success){
+            if (adaptive){
+                iq->timeoutms = -1;
+                enqueued = add_to_seqnum_wait_queue(iq, bdb_handle, (seqnum_type *)ss, &iq->timeoutms, iq->txnsize,1); 
+            }
+            else if (timeoutms == -1){
+                int timeoutms = ((bdb_state_type *)bdb_handle)->attr->reptimeout * MILLISEC;
+                enqueued = add_to_seqnum_wait_queue(iq, bdb_handle, (seqnum_type *)ss, &timeoutms, 0,0); 
+            }
+            else{
+                enqueued = add_to_seqnum_wait_queue(iq, bdb_handle, (seqnum_type *)ss, &timeoutms, 0,0); 
+            }
+        }
+        
+        if(!enqueued){
+            // We could not enqueue on to seqnum_wait_queue. Resorting to sequential wait_for_seqnum
+            if (adaptive)
+                rc = bdb_wait_for_seqnum_from_all_adaptive_newcoh(
+                    bdb_handle, (seqnum_type *)ss, iq->txnsize, &iq->timeoutms);
+            else if (timeoutms == -1)
+                rc = bdb_wait_for_seqnum_from_all(bdb_handle, (seqnum_type *)ss);
+            else
+                rc = bdb_wait_for_seqnum_from_all_timeout(
+                    bdb_handle, (seqnum_type *)ss, timeoutms);
+        }
+        else{
+            rc = 0; // For now setting rc = 0, need to figure out what to set it as, and how to set it.
+        }
+
         iq->gluewhere = "bdb_wait_for_seqnum_from_all done";
         if (rc != 0) {
             logmsg(LOGMSG_ERROR, "*WARNING* bdb_wait_seqnum:error syncing all nodes rc %d\n",
