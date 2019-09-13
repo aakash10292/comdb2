@@ -132,6 +132,7 @@ void berk_memp_sync_alarm_ms(int);
 #include <build/db.h>
 #include "comdb2_ruleset.h"
 
+#include<seqnum_wait.h>
 #define QUOTE_(x) #x
 #define QUOTE(x) QUOTE_(x)
 
@@ -141,7 +142,7 @@ int gbl_sc_timeoutms = 1000 * 60;
 char gbl_dbname[MAX_DBNAME_LENGTH];
 int gbl_largepages;
 int gbl_llmeta_open = 0;
-
+int from_purge_old_files = 0;
 int gbl_sqlite_sortermult = 1;
 
 int gbl_sqlite_sorter_mem = 300 * 1024 * 1024; /* 300 meg */
@@ -163,6 +164,7 @@ int gbl_extended_sql_debug_trace = 0;
 extern int gbl_dump_fsql_response;
 struct ruleset *gbl_ruleset = NULL;
 
+int gbl_seqnum_wait_init_success = 1;
 void myctrace(const char *c) { ctrace("%s", c); }
 
 void berkdb_use_malloc_for_regions_with_callbacks(void *mem,
@@ -1296,7 +1298,9 @@ static void *purge_old_files_thread(void *arg)
         }
 
         if (rc == 0) {
+            from_purge_old_files = 1;
             rc = trans_commit(&iq, trans, gbl_mynode);
+            from_purge_old_files = 0;
             if (rc) {
                 if (rc == RC_INTERNAL_RETRY && retries < 10) {
                     retries++;
@@ -3993,6 +3997,12 @@ static int init(int argc, char **argv)
 
     load_dbstore_tableversion(thedb, NULL);
 
+    // Setting up async seqnum_wait 
+    rc = seqnum_wait_gbl_mem_init();
+    if(rc){
+        gbl_seqnum_wait_init_success = 0;
+        logmsg(LOGMSG_ERROR, "Error while initialising seqnum_wait... Waiting for seqnums will happen sequentially %d\n", rc);
+    }
     gbl_backend_opened = 1;
     unlock_schema_lk();
 
@@ -5541,7 +5551,8 @@ int main(int argc, char **argv)
                 strerror(rc));
         return 1;
     }
-
+    //CLEAN UP SEQNUM_STUFF
+    seqnum_wait_cleanup();
     return 0;
 }
 
