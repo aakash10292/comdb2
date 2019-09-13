@@ -508,15 +508,18 @@ void process_work_item(struct seqnum_wait *item){
             int now = comdb2_time_epochms;
             Pthread_mutex_lock(&(work_queue->mutex));
             if(now > work_queue->next_commit_timestamp){
+                // We're safe to commit and return control to client
                 item->cur_state = COMMIT;
                 goto case COMMIT;
             }
             else{
                 item->cur_state = COMMIT;
                 add_to_absolute_ts_list(item, commit_time);
+                break;
             }
             Pthread_mutex_unlock(&(work_queue->mutex));
         case COMMIT:
+            // 
             
     }
 }
