@@ -141,7 +141,6 @@ int gbl_sc_timeoutms = 1000 * 60;
 char gbl_dbname[MAX_DBNAME_LENGTH];
 int gbl_largepages;
 int gbl_llmeta_open = 0;
-int from_purge_old_files = 0;
 int gbl_sqlite_sortermult = 1;
 
 int gbl_sqlite_sorter_mem = 300 * 1024 * 1024; /* 300 meg */
@@ -1295,9 +1294,9 @@ static void *purge_old_files_thread(void *arg)
         }
 
         if (rc == 0) {
-            from_purge_old_files = 1;
+            iq.should_wait_async = 0;
             rc = trans_commit(&iq, trans, gbl_mynode);
-            from_purge_old_files = 0;
+            iq.should_wait_async = 1;
             if (rc) {
                 if (rc == RC_INTERNAL_RETRY && retries < 10) {
                     retries++;

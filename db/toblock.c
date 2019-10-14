@@ -1949,8 +1949,8 @@ int toblock(struct ireq *iq)
     }
 
     rc = toblock_outer(iq, &blkstate);
-
-    block_state_free(&blkstate);
+    if(*iq->is_wait_async)==0)
+        block_state_free(&blkstate);
 
     return rc;
 }
@@ -2247,7 +2247,7 @@ static int toblock_outer(struct ireq *iq, block_state_t *blkstate)
             /* if he's still working for me, try again */
             if (working_for == my_tid) {
                 if (retry_count > 100) {
-                    poll(0, 0, (rand() % 25 + 1));
+                    poll(0,0(rand() % 25 + 1));
                 }
                 retry_count++;
 
@@ -2266,7 +2266,8 @@ static int toblock_outer(struct ireq *iq, block_state_t *blkstate)
         Pthread_mutex_unlock(&(iq->dbenv->prefault_helper.mutex));
     }
 
-    javasp_trans_end(iq->jsph);
+    if(*(iq->is_wait_async)==0)
+        javasp_trans_end(iq->jsph);
     return rc;
 }
 
@@ -2405,8 +2406,10 @@ static void backout_and_abort_tranddl(struct ireq *iq, tran_type *parent,
         iq->sc_locked = 0;
     }
     if (iq->sc_logical_tran) {
+        iq->should_wait_async = 0;
         rc = trans_commit_logical(iq, iq->sc_logical_tran, gbl_mynode, 0, 1,
                                   NULL, 0, NULL, 0);
+        iq->shold_wait_async = 1;
         if (rc != 0) {
             logmsg(LOGMSG_ERROR, "%s:%d TRANS_ABORT FAILED RC %d", __func__,
                    __LINE__, rc);
@@ -4945,7 +4948,9 @@ static int toblock_main_int(struct javasp_trans_state *javasp_trans_handle,
        and call tran_commit_logical_with_blkseq instead */
     if (!rowlocks && parent_trans && !iq->tranddl) {
         /*fprintf(stderr, "commit child\n");*/
+        iq->should_wait_async = 0;
         irc = trans_commit(iq, trans, source_host);
+        iq->should_wait_async = 1;
         if (irc != 0) { /* this shouldnt happen */
             logmsg(LOGMSG_FATAL, "%s:%d TRANS_COMMIT FAILED RC %d", __func__,
                    __LINE__, irc);
@@ -5519,6 +5524,8 @@ add_blkseq:
 
             if (rc == 0 && have_blkseq) {
                 if (iq->tranddl) {
+                    // For schema change transactions, we don't want to wait async
+                    iq->should_wait_async = 0;
                     if (backed_out) {
                         assert(trans == NULL);
                         bdb_ltran_put_schema_lock(iq->sc_logical_tran);
@@ -5544,32 +5551,36 @@ add_blkseq:
                                                gbl_mynode, 0, 1, NULL, 0, NULL,
                                                0);
                     iq->sc_logical_tran = NULL;
+                    iq->should_wait_async = 1;
                 } else {
+                    iq->hascommitlock = hascommitlock;
                     irc = trans_commit_adaptive(iq, parent_trans, source_host);
                 }
-                if (irc) {
-                    /* We've committed to the btree, but we are not replicated:
-                     * ask the the client to retry */
-                    if (irc == BDBERR_NOT_DURABLE) {
-                        rc = ERR_NOT_DURABLE;
+                if(*(iq->is_wait_async)==0){
+                    if (irc) {
+                        /* We've committed to the btree, but we are not replicated:
+                         * ask the the client to retry */
+                        if (irc == BDBERR_NOT_DURABLE) {
+                            rc = ERR_NOT_DURABLE;
+                        }
+                        logmsg(LOGMSG_DEBUG, "trans_commit_adaptive irc=%d, "
+                                "rc=%d\n", irc, rc);
                     }
-                    logmsg(LOGMSG_DEBUG, "trans_commit_adaptive irc=%d, "
-                            "rc=%d\n", irc, rc);
-                }
 
-                if (hascommitlock) {
-                    Pthread_rwlock_unlock(&commit_lock);
-                    hascommitlock = 0;
-                }
-                if (gbl_dump_blkseq && iq->have_snap_info) {
-                    char *bskey = alloca(iq->snap_info.keylen + 1);
-                    memcpy(bskey, iq->snap_info.key, iq->snap_info.keylen);
-                    bskey[iq->snap_info.keylen] = '\0';
-                    logmsg(LOGMSG_USER,
-                           "blkseq add '%s', outrc=%d errval=%d "
-                           "errstr='%s', rcout=%d commit-rc=%d\n",
-                           bskey, outrc, iq->errstat.errval, iq->errstat.errstr,
-                           iq->sorese.rcout, irc);
+                    if (hascommitlock) {
+                        Pthread_rwlock_unlock(&commit_lock);
+                        hascommitlock = 0;
+                    }
+                    if (gbl_dump_blkseq && iq->have_snap_info) {
+                        char *bskey = alloca(iq->snap_info.keylen + 1);
+                        memcpy(bskey, iq->snap_info.key, iq->snap_info.keylen);
+                        bskey[iq->snap_info.keylen] = '\0';
+                        logmsg(LOGMSG_USER,
+                               "blkseq add '%s', outrc=%d errval=%d "
+                               "errstr='%s', rcout=%d commit-rc=%d\n",
+                               bskey, outrc, iq->errstat.errval, iq->errstat.errstr,
+                               iq->sorese.rcout, irc);
+                    }
                 }
             } else {
                 if (hascommitlock) {
@@ -5647,6 +5658,8 @@ add_blkseq:
             if (!backed_out) {
                 /*fprintf(stderr, "trans_commit_logical\n");*/
                 if (iq->tranddl) {
+                    // We don't want to farm off this commit request to be acked asynchronously
+                    iq->should_wait_async = 0;
                     irc = trans_commit(iq, iq->sc_tran, source_host);
                     if (irc != 0) { /* this shouldnt happen */
                         logmsg(LOGMSG_FATAL, "%s:%d TRANS_COMMIT FAILED RC %d",
@@ -5654,23 +5667,28 @@ add_blkseq:
                         comdb2_die(0);
                     }
                     iq->sc_tran = NULL;
+                    iq->should_wait_async = 1;
                 }
                 if (iq->sc_locked) {
                     unlock_schema_lk();
                     iq->sc_locked = 0;
                 }
                 /* TODO: private blkseq with rowlocks? */
+                iq->should_wait_async = 1;
+                iq->hascommitlock = hascommitlock;
                 rc = trans_commit_logical(
                     iq, trans, gbl_mynode, 0, 1, buf_fstblk,
                     p_buf_fstblk - buf_fstblk + sizeof(int), bskey, bskeylen);
 
-                if (hascommitlock) {
-                    Pthread_rwlock_unlock(&commit_lock);
-                    hascommitlock = 0;
-                }
+                if(*(iq->is_wait_async)==0){
+                    if (hascommitlock) {
+                        Pthread_rwlock_unlock(&commit_lock);
+                        hascommitlock = 0;
+                    }
 
-                if (rc == BDBERR_NOT_DURABLE)
-                    rc = ERR_NOT_DURABLE;
+                    if(rc == BDBERR_NOT_DURABLE)
+                        rc = ERR_NOT_DURABLE;
+                }
             } else {
                 if (hascommitlock) {
                     Pthread_rwlock_unlock(&commit_lock);
@@ -5740,33 +5758,37 @@ add_blkseq:
                 if (irc == BDBERR_NOT_DURABLE)
                     irc = ERR_NOT_DURABLE;
             } else {
-
+                iq->should_wait_async = 1;
+                iq->hascommitlock = hascommitlock;
                 irc = trans_commit_logical(iq, trans, gbl_mynode, 0, 1, NULL, 0,
                                            NULL, 0);
-                if (irc == BDBERR_NOT_DURABLE)
-                    irc = ERR_NOT_DURABLE;
+                if(*(iq->is_wait_async)==0){
+                    if (irc == BDBERR_NOT_DURABLE)
+                        irc = ERR_NOT_DURABLE;
 
-                if (hascommitlock) {
-                    Pthread_rwlock_unlock(&commit_lock);
-                    hascommitlock = 0;
+                    if (hascommitlock) {
+                        Pthread_rwlock_unlock(&commit_lock);
+                        hascommitlock = 0;
+                    }
                 }
             }
         } else {
             /*fprintf(stderr, "commiting parent\n");*/
             irc = 0;
             if (trans) {
-
+                iq->should_wait_async = 1;
+                iq->hascommitlock = hascommitlock;
                 irc = trans_commit_adaptive(iq, trans, source_host);
-                if (irc == BDBERR_NOT_DURABLE)
+                if (*(iq->is_wait_async)==0 && irc == BDBERR_NOT_DURABLE)
                     irc = rc = ERR_NOT_DURABLE;
             }
-            if (hascommitlock) {
+            if (*(iq->is_wait_async)==0 && hascommitlock) {
                 Pthread_rwlock_unlock(&commit_lock);
                 hascommitlock = 0;
             }
         }
 
-        if (irc != 0) {
+        if (*(iq->is_wait_async)==0 && rc != 0) {
             if (iq->debug)
                 reqprintf(iq, "%p:PARENT TRANSACTION COMMIT FAILED RC %d",
                           parent_trans, rc);
@@ -5790,17 +5812,20 @@ add_blkseq:
 
     /* At this stage it's not a replay so we either committed a transaction
      * or we had to abort. */
-    if (outrc == 0) {
-        /* Committed new sqlite_stat1 statistics from analyze - reload sqlite
-         * engines */
-        iq->dbenv->txns_committed++;
-        if (iq->dbglog_file) {
-            dbglog_dump_write_stats(iq);
-            sbuf2close(iq->dbglog_file);
-            iq->dbglog_file = NULL;
+    if((*iq->is_wait_async) == 0){
+        // If we haven't farmed off this transaction to be acked asynchronously,.. 
+        if (outrc == 0) {
+            /* Committed new sqlite_stat1 statistics from analyze - reload sqlite
+             * engines */
+            iq->dbenv->txns_committed++;
+            if (iq->dbglog_file) {
+                dbglog_dump_write_stats(iq);
+                sbuf2close(iq->dbglog_file);
+                iq->dbglog_file = NULL;
+            }
+        } else {
+            iq->dbenv->txns_aborted++;
         }
-    } else {
-        iq->dbenv->txns_aborted++;
     }
 
     /* update stats (locklessly so we may get gibberish - I know this
@@ -5846,27 +5871,32 @@ add_blkseq:
 cleanup:
     logmsg(LOGMSG_DEBUG, "%s cleanup did_replay:%d fromline:%d\n", __func__,
            did_replay, fromline);
-    bdb_checklock(thedb->bdb_env);
+    if(*(iq->is_wait_async)==0){
+        bdb_checklock(thedb->bdb_env);
 
-    iq->timings.req_finished = osql_log_time();
-    /*printf("Set req_finished=%llu\n", iq->timings.req_finished);*/
-    iq->timings.retries++;
+        iq->timings.req_finished = osql_log_time();
+        /*printf("Set req_finished=%llu\n", iq->timings.req_finished);*/
+        iq->timings.retries++;
 
-    /* clear in memory blkseq entry
-       if this is not a osql request, this is fine
-       the iq will not be hashed and this is a nop
-     */
-    if (outrc != RC_INTERNAL_RETRY)
-        osql_blkseq_unregister(iq);
+        /* clear in memory blkseq entry
+           if this is not a osql request, this is fine
+           the iq will not be hashed and this is a nop
+         */
+        if (outrc != RC_INTERNAL_RETRY)
+            osql_blkseq_unregister(iq);
 
-    /*
-      wait for last committed seqnum on abort, in case we are racing.
-         thread 1:  select -> not found ; insert
-         thread 2:  insert -> got dupe? -> select -> NOT FOUND?!
-      thread 2 can race with thread 1, this lets the abort wait
-    */
-    if (backed_out)
-        trans_wait_for_last_seqnum(iq, source_host);
+        /*
+          wait for last committed seqnum on abort, in case we are racing.
+             thread 1:  select -> not found ; insert
+             thread 2:  insert -> got dupe? -> select -> NOT FOUND?!
+          thread 2 can race with thread 1, this lets the abort wait
+        */
+        if (backed_out){
+            iq->should_wait_async = 0;
+            trans_wait_for_last_seqnum(iq, source_host);
+            iq->should_wait_async = 1;
+        }
+    }
 
     return outrc;
 }
@@ -5913,15 +5943,21 @@ static int toblock_main(struct javasp_trans_state *javasp_trans_handle,
     }
 
     start = gettimeofday_ms();
+    if(iq->osql_flags){
+        // If osql flags are set we don't want to farm off to async wait. 
+        iq->should_wait_async = 0;
+    }
     rc = toblock_main_int(javasp_trans_handle, iq, p_blkstate);
     end = gettimeofday_ms();
 
-    if (rc == 0) {
-        osql_postcommit_handle(iq);
-        handle_postcommit_bpfunc(iq);
-    } else {
-        osql_postabort_handle(iq);
-        handle_postabort_bpfunc(iq);
+    if(*(iq->is_wait_async)==0){
+        if (rc == 0) {
+            osql_postcommit_handle(iq);
+            handle_postcommit_bpfunc(iq);
+        } else {
+            osql_postabort_handle(iq);
+            handle_postabort_bpfunc(iq);
+        }
     }
 
     Pthread_mutex_lock(&blklk);

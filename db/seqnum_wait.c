@@ -50,10 +50,14 @@ int timestamp_compare(int ts1, int ts2){
 
 
 int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh){
-    struct seqnum_wait *swait = allocate_seqnum_wait(); 
+    struct seqnum_wait *swait = allocate_seqnum_wait();
+    if(swait==NULL){
+        // Could not allocate memory...  return 0 here to relapse to waiting inline
+        *(iq->is_wait_async)=0;
+        return 0; 
+    }
     int status = 0;
     swait->cur_state = INIT;
-    swait-.cur_node_idx = 0;
     swait->iq = iq;
     swait->bdb_state = bdb_state;
     swait->seqnum = seqnum;
@@ -93,6 +97,26 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     Pthread_cond_broadcast(&(bdb_state->seqnum_info->cond));
     Pthread_mutex_unlock(&(bdb_state->attr->seqnum_info->lock));
     return 0;
+}
+
+//Utility method to print the work_queue
+void print_lists(){
+    struct seqnum_wait *cur = NULL;
+    pthread_mutex_lock(&(work_queue->mutex));
+    LISTC_FOR_EACH(&(work_queue->lsn_list),cur, lsn_lnk)
+    {
+        printf("{LSN: %d|%d}",cur->seqnum->file,cur->seqnum->offset);
+        printf("->"); 
+    }
+    printf("\n");
+    cur = NULL;
+    LISTC_FOR_EACH(&(work_queue->absolute_ts_list),cur, absolute_ts_lnk)
+    {
+        printf("{TS: %d|%d|%d}",cur->seqnum->file,cur->seqnum->offset,cur->next_ts);
+        printf("->"); 
+    }
+    printf("\n");
+    pthread_mutex_unlock(&(work_queue->mutex));
 }
 
 
@@ -519,9 +543,150 @@ void process_work_item(struct seqnum_wait *item){
             }
             Pthread_mutex_unlock(&(work_queue->mutex));
         case COMMIT:
-            // 
+            if(iq->hascommitlock){
+                Pthread_rwlock_unlock(&commit_lock);
+                iq->hascommitlock = 0;
+            }
+            if (item->outrc == 0) {
+                /* Committed new sqlite_stat1 statistics from analyze - reload sqlite
+                 * engines */
+                item->iq->dbenv->txns_committed++;
+                if (item->iq->dbglog_file) {
+                    dbglog_dump_write_stats(item->iq);
+                    sbuf2close(item->iq->dbglog_file);
+                    item->iq->dbglog_file = NULL;
+                }
+            } else {
+                item->iq->dbenv->txns_aborted++;
+            }
+            bdb_checklock(thedb->dbenv);    
+            item->iq->timings.req_finished = osql_log_time();
+            item->iq->timings.retries++;
+            osql_blkseq_unregister(item->iq);
+
+            javasp_trans_end(item->iq->jsph);
+            block_state_free(&(iq->blkstate));
+
+
+            // Send back the response -> code reference db/sltdbt.c line 297
+            if(item->iq->debug){
+                reqprintf(iq, "iq->reply_len=%td RC %d\n",
+                          (ptrdiff_t) (item->iq->p_buf_out - item->iq->p_buf_out_start), item->outrc);
+            }
+            /* pack data at tail of reply */
+            pack_tail(item->iq);
+            if(item->iq->sorese.type){
+                if (item->outrc && (!item->iq->sorese.rcout || item->outrc == ERR_NOT_DURABLE))
+                    item->iq->sorese.rcout = item->outrc;
+
+                int sorese_rc = item->outrc;
+                if (item->outrc == 0 && item->iq->sorese.rcout == 0 &&
+                    item->iq->errstat.errval == COMDB2_SCHEMACHANGE_OK) {
+                    // pretend error happend to get errstat shipped to replicant
+                    sorese_rc = 1;
+                } else {
+                    item->iq->errstat.errval = item->iq->sorese.rcout;
+                }
+                if (item->iq->debug) {
+                    uuidstr_t us;
+                    reqprintf(item->iq,
+                              "sorese returning rqid=%llu uuid=%s node=%s type=%d "
+                              "nops=%d rcout=%d retried=%d RC=%d errval=%d\n",
+                              item->iq->sorese.rqid, comdb2uuidstr(item->iq->sorese.uuid, us),
+                              item->iq->sorese.host, item->iq->sorese.type, item->iq->sorese.nops,
+                              item->iq->sorese.rcout, item->iq->sorese.osql_retry, item->outrc,
+                              item->iq->errstat.errval);
+                }
+
+                if (item->iq->sorese.rqid == 0)
+                    abort();
+                osql_comm_signal_sqlthr_rc(&item->iq->sorese, &item->iq->errstat, sorese_rc);
+
+                item->iq->timings.req_sentrc = osql_log_time();
+            } else if (item->iq->is_dumpresponse) {
+                signal_buflock(item->iq->request_data);
+                if (item->outrc != 0) {
+                    logmsg(LOGMSG_ERROR,
+                           "\n Unexpected error %d in block operation", item->outrc);
+                }
+            } else if (item->iq->is_fromsocket) {
+                net_delay(iq->frommach);
+                /* process socket end request */
+                if (iq->is_socketrequest) {
+                    if (iq->sb == NULL) {
+                        rc = offload_comm_send_blockreply(
+                            iq->frommach, iq->rqid, iq->p_buf_out_start,
+                            iq->p_buf_out - iq->p_buf_out_start, rc);
+                        free_bigbuf_nosignal(iq->p_buf_out_start);
+                    } else {
+                        /* The tag request is handled locally.
+                           We know for sure `request_data' is a `buf_lock_t'. */
+                        struct buf_lock_t *p_slock =
+                            (struct buf_lock_t *)iq->request_data;
+                        {
+                            Pthread_mutex_lock(&p_slock->req_lock);
+                            if (p_slock->reply_state == REPLY_STATE_DISCARD) {
+                                Pthread_mutex_unlock(&p_slock->req_lock);
+                                cleanup_lock_buffer(p_slock);
+                                free_bigbuf_nosignal(iq->p_buf_out_start);
+                            } else {
+                                sndbak_open_socket(
+                                    iq->sb, iq->p_buf_out_start,
+                                    iq->p_buf_out - iq->p_buf_out_start, rc);
+                                free_bigbuf(iq->p_buf_out_start, iq->request_data);
+                                Pthread_mutex_unlock(&p_slock->req_lock);
+                            }
+                        }
+                    }
+                    iq->request_data = iq->p_buf_out_start = NULL;
+                } else {
+                    sndbak_socket(iq->sb, iq->p_buf_out_start,
+                                  iq->p_buf_out - iq->p_buf_out_start, rc);
+                    free(iq->p_buf_out_start);
+                }
+                iq->p_buf_out_end = iq->p_buf_out_start = iq->p_buf_out = NULL;
+                iq->p_buf_in_end = iq->p_buf_in = NULL;
+            } else if (comdb2_ipc_sndbak_len_sinfo) {
+                comdb2_ipc_sndbak_len_sinfo(iq, rc);
+            }
+            /* Unblock anybody waiting for stuff that was added in this transaction. */
+            clear_trans_from_repl_list(item->iq->repl_list);
+
+            /* records were added to queues, and we committed successfully.  wake
+             * up queue consumers. */
+            if (item->rc == 0 && item->iq->num_queues_hit > 0) {
+                if (item->iq->num_queues_hit > MAX_QUEUE_HITS_PER_TRANS) {
+                    /* good heavens.  wake up all consumers */
+                    dbqueuedb_wake_all_consumers_all_queues(item->iq->dbenv, 0);
+                } else {
+                    unsigned ii;
+                    for (ii = 0; ii < item->iq->num_queues_hit; ii++)
+                        dbqueuedb_wake_all_consumers(item->iq->queues_hit[ii], 0);
+                }
+            }
+
+            /* Finish off logging. */
+            if (item->iq->blocksql_tran) {
+                osql_bplog_reqlog_queries(item->iq);
+            }
+            reqlog_end_request(item->iq->reqlogger, item->outrc, __func__, __LINE__);
+            release_node_stats(NULL, NULL, item->iq->frommach);
+            if (gbl_print_deadlock_cycles)
+                osql_snap_info = NULL;
+
+            if (item->iq->sorese.type) {
+                if (item->iq->p_buf_out_start) {
+                    free(item->iq->p_buf_out_start);
+                    item->iq->p_buf_out_end = item->iq->p_buf_out_start = item->iq->p_buf_out = NULL;
+                    item->iq->p_buf_in_end = item->iq->p_buf_in = NULL;
+                }
+            }
+
+            /* Make sure we do not leak locks */
+            bdb_checklock(thedb->bdb_env);
             
-    }
+
+    }// End of Switch
 }
 
 void *queue_processor(void *arg){
@@ -544,7 +709,7 @@ void *queue_processor(void *arg){
                 Pthread_mutex_lock(&(work_queue->mutex));
                 item = item.absolute_ts_lnk->next;
                 Pthread_mutex_unlock(&(work_queue->mutex));
-            }
+            
         }
         else{
             // wait_rc == 0, which means either this is the first run of infinite while loop , or..

@@ -192,13 +192,15 @@ retry:
        this ensures no requests replays will be left stuck
        papers around other short returns in toblock jic
        */
-    osql_blkseq_unregister(iq);
+    if(*(iq->is_wait_async)==0){
+        osql_blkseq_unregister(iq);
 
-    Pthread_mutex_lock(&delay_lock);
+        Pthread_mutex_lock(&delay_lock);
 
-    gbl_maxwthreadpenalty -= totpen;
+        gbl_maxwthreadpenalty -= totpen;
 
-    Pthread_mutex_unlock(&delay_lock);
+        Pthread_mutex_unlock(&delay_lock);
+    }
 
     /* return codes we think the proxy understands.  all other cases
        return proxy retry */
@@ -293,7 +295,7 @@ int handle_ireq(struct ireq *iq)
 
     if (rc == RC_INTERNAL_FORWARD) {
         rc = 0;
-    } else {
+    } else if((*iq->is_wait_async)==0) {
         /* SNDBAK RESPONSE */
         if (iq->debug) {
             reqprintf(iq, "iq->reply_len=%td RC %d\n",
@@ -404,42 +406,44 @@ int handle_ireq(struct ireq *iq)
         }
     }
 
-    /* Unblock anybody waiting for stuff that was added in this transaction. */
-    clear_trans_from_repl_list(iq->repl_list);
+    if((*iq->is_wait_async)==0){
+        /* Unblock anybody waiting for stuff that was added in this transaction. */
+        clear_trans_from_repl_list(iq->repl_list);
 
-    /* records were added to queues, and we committed successfully.  wake
-     * up queue consumers. */
-    if (rc == 0 && iq->num_queues_hit > 0) {
-        if (iq->num_queues_hit > MAX_QUEUE_HITS_PER_TRANS) {
-            /* good heavens.  wake up all consumers */
-            dbqueuedb_wake_all_consumers_all_queues(iq->dbenv, 0);
-        } else {
-            unsigned ii;
-            for (ii = 0; ii < iq->num_queues_hit; ii++)
-                dbqueuedb_wake_all_consumers(iq->queues_hit[ii], 0);
+        /* records were added to queues, and we committed successfully.  wake
+         * up queue consumers. */
+        if (rc == 0 && iq->num_queues_hit > 0) {
+            if (iq->num_queues_hit > MAX_QUEUE_HITS_PER_TRANS) {
+                /* good heavens.  wake up all consumers */
+                dbqueuedb_wake_all_consumers_all_queues(iq->dbenv, 0);
+            } else {
+                unsigned ii;
+                for (ii = 0; ii < iq->num_queues_hit; ii++)
+                    dbqueuedb_wake_all_consumers(iq->queues_hit[ii], 0);
+            }
         }
-    }
 
-    /* Finish off logging. */
-    if (iq->blocksql_tran) {
-        osql_bplog_reqlog_queries(iq);
-    }
-    reqlog_end_request(iq->reqlogger, rc, __func__, __LINE__);
-    release_node_stats(NULL, NULL, iq->frommach);
-    if (gbl_print_deadlock_cycles)
-        osql_snap_info = NULL;
-
-    if (iq->sorese.type) {
-        if (iq->p_buf_out_start) {
-            free(iq->p_buf_out_start);
-            iq->p_buf_out_end = iq->p_buf_out_start = iq->p_buf_out = NULL;
-            iq->p_buf_in_end = iq->p_buf_in = NULL;
+        /* Finish off logging. */
+        if (iq->blocksql_tran) {
+            osql_bplog_reqlog_queries(iq);
         }
+        reqlog_end_request(iq->reqlogger, rc, __func__, __LINE__);
+        release_node_stats(NULL, NULL, iq->frommach);
+        if (gbl_print_deadlock_cycles)
+            osql_snap_info = NULL;
+
+        if (iq->sorese.type) {
+            if (iq->p_buf_out_start) {
+                free(iq->p_buf_out_start);
+                iq->p_buf_out_end = iq->p_buf_out_start = iq->p_buf_out = NULL;
+                iq->p_buf_in_end = iq->p_buf_in = NULL;
+            }
+        }
+
+        /* Make sure we do not leak locks */
+
+        bdb_checklock(thedb->bdb_env);
     }
-
-    /* Make sure we do not leak locks */
-
-    bdb_checklock(thedb->bdb_env);
 
     return rc;
 }

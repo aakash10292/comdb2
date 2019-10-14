@@ -493,6 +493,11 @@ static void *thd_req(void *vthd)
         thrman_where(thr_self, req2a(thd->iq->opcode));
         thrman_origin(thr_self, getorigin(thd->iq));
         user_request_begin(REQUEST_TYPE_QTRAP, FLAG_REQUEST_TRACK_EVERYTHING);
+        // Introduced two flags into iq :
+        // 1.) should_wait_async -> flag to determine if we should farmoff this request to be acked asynchronously
+        // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
+        thd->iq.should_wait_async = 1; // By default we want it to be farmedoff... certain conditions (encountered later) might turn off this flag.
+        *(thd->iq->is_wait_async) = 0; // Default state is that it hasn't been farmed off. 
         handle_ireq(thd->iq);
         if (debug_this_request(gbl_debug_until) ||
             (gbl_who > 0 && !gbl_sdebug)) {
@@ -508,146 +513,148 @@ static void *thd_req(void *vthd)
         thrman_origin(thr_self, NULL);
         thrman_where(thr_self, "idle");
         thd->iq->where = "done executing";
-
         // before acquiring next request, yield
         comdb2bma_yield_all();
+        // If this request was farmed off to be acked asynchronously, then the following work has already been done. No need to repeat/
+        // If it hasn't, then commit was acked in line. We need to do the following work here: 
+        if(*(thd->iq->is_wait_async) == 0){
+            /*NEXT REQUEST*/
+            LOCK(&lock)
+            {
+                struct dbq_entry_t *nxtrq = NULL;
+                int newrqwriter = 0;
 
-        /*NEXT REQUEST*/
-        LOCK(&lock)
-        {
-            struct dbq_entry_t *nxtrq = NULL;
-            int newrqwriter = 0;
+                if (iamwriter) {
+                    write_thd_count--;
+                }
 
-            if (iamwriter) {
-                write_thd_count--;
-            }
+                if (thd->iq->usedb && thd->iq->ixused >= 0 &&
+                    thd->iq->ixused < thd->iq->usedb->nix &&
+                    thd->iq->usedb->ixuse) {
+                    thd->iq->usedb->ixuse[thd->iq->ixused] += thd->iq->ixstepcnt;
+                }
+                thd->iq->ixused = -1;
+                thd->iq->ixstepcnt = 0;
 
-            if (thd->iq->usedb && thd->iq->ixused >= 0 &&
-                thd->iq->ixused < thd->iq->usedb->nix &&
-                thd->iq->usedb->ixuse) {
-                thd->iq->usedb->ixuse[thd->iq->ixused] += thd->iq->ixstepcnt;
-            }
-            thd->iq->ixused = -1;
-            thd->iq->ixstepcnt = 0;
-
-            if (thd->iq->dbglog_file) {
-                sbuf2close(thd->iq->dbglog_file);
-                thd->iq->dbglog_file = NULL;
-            }
-            if (thd->iq->nwrites) {
-                free(thd->iq->nwrites);
-                thd->iq->nwrites = NULL;
-            }
-            if (thd->iq->vfy_genid_hash) {
-                hash_free(thd->iq->vfy_genid_hash);
-                thd->iq->vfy_genid_hash = NULL;
-            }
-            if (thd->iq->vfy_genid_pool) {
-                pool_free(thd->iq->vfy_genid_pool);
-                thd->iq->vfy_genid_pool = NULL;
-            }
-            if (thd->iq->sorese.osqllog) {
-                sbuf2close(thd->iq->sorese.osqllog);
-                thd->iq->sorese.osqllog = NULL;
-            }
-            thd->iq->vfy_genid_track = 0;
+                if (thd->iq->dbglog_file) {
+                    sbuf2close(thd->iq->dbglog_file);
+                    thd->iq->dbglog_file = NULL;
+                }
+                if (thd->iq->nwrites) {
+                    free(thd->iq->nwrites);
+                    thd->iq->nwrites = NULL;
+                }
+                if (thd->iq->vfy_genid_hash) {
+                    hash_free(thd->iq->vfy_genid_hash);
+                    thd->iq->vfy_genid_hash = NULL;
+                }
+                if (thd->iq->vfy_genid_pool) {
+                    pool_free(thd->iq->vfy_genid_pool);
+                    thd->iq->vfy_genid_pool = NULL;
+                }
+                if (thd->iq->sorese.osqllog) {
+                    sbuf2close(thd->iq->sorese.osqllog);
+                    thd->iq->sorese.osqllog = NULL;
+                }
+                thd->iq->vfy_genid_track = 0;
 #if 0
-            fprintf(stderr, "%s:%d: THD=%d relablk iq=%p\n", __func__, __LINE__, pthread_self(), thd->iq);
+                fprintf(stderr, "%s:%d: THD=%d relablk iq=%p\n", __func__, __LINE__, pthread_self(), thd->iq);
 #endif
-            pool_relablk(p_reqs, thd->iq); /* this request is done, so release
-                                            * resource. */
-            /* get next item off hqueue */
-            nxtrq = (struct dbq_entry_t *)listc_rtl(&q_reqs);
-            thd->iq = 0;
-            if (nxtrq != 0) {
-                thd->iq = nxtrq->obj;
-                newrqwriter = is_req_write(thd->iq->opcode) ? 1 : 0;
+                pool_relablk(p_reqs, thd->iq); /* this request is done, so release
+                                                * resource. */
+                /* get next item off hqueue */
+                nxtrq = (struct dbq_entry_t *)listc_rtl(&q_reqs);
+                thd->iq = 0;
+                if (nxtrq != 0) {
+                    thd->iq = nxtrq->obj;
+                    newrqwriter = is_req_write(thd->iq->opcode) ? 1 : 0;
 
-                numwriterthreads = gbl_maxwthreads - gbl_maxwthreadpenalty;
-                if (numwriterthreads < 1)
-                    numwriterthreads = 1;
+                    numwriterthreads = gbl_maxwthreads - gbl_maxwthreadpenalty;
+                    if (numwriterthreads < 1)
+                        numwriterthreads = 1;
 
-                if (newrqwriter &&
-                    (write_thd_count - iothreads) >= numwriterthreads) {
-                    /* dont process next request as it goes over
-                       the write limit..put it back on queue and grab
-                       next read */
-                    listc_atl(&q_reqs, nxtrq);
-                    nxtrq = (struct dbq_entry_t *)listc_rtl(&rq_reqs);
-                    if (nxtrq != NULL) {
-                        listc_rfl(&q_reqs, nxtrq);
-                        /* release the memory block of the link */
-                        thd->iq = nxtrq->obj;
-                        pool_relablk(pq_reqs, nxtrq);
-                        newrqwriter = 0;
+                    if (newrqwriter &&
+                        (write_thd_count - iothreads) >= numwriterthreads) {
+                        /* dont process next request as it goes over
+                           the write limit..put it back on queue and grab
+                           next read */
+                        listc_atl(&q_reqs, nxtrq);
+                        nxtrq = (struct dbq_entry_t *)listc_rtl(&rq_reqs);
+                        if (nxtrq != NULL) {
+                            listc_rfl(&q_reqs, nxtrq);
+                            /* release the memory block of the link */
+                            thd->iq = nxtrq->obj;
+                            pool_relablk(pq_reqs, nxtrq);
+                            newrqwriter = 0;
+                        } else {
+                            thd->iq = 0;
+                        }
                     } else {
-                        thd->iq = 0;
+                        if (!newrqwriter) {
+                            /*get rid of new request from read queue */
+                            listc_rfl(&rq_reqs, nxtrq);
+                        }
+                        /* release the memory block of the link */
+                        pool_relablk(pq_reqs, nxtrq);
                     }
-                } else {
-                    if (!newrqwriter) {
-                        /*get rid of new request from read queue */
-                        listc_rfl(&rq_reqs, nxtrq);
+                    if (newrqwriter && thd->iq != 0) {
+                        write_thd_count++;
                     }
-                    /* release the memory block of the link */
-                    pool_relablk(pq_reqs, nxtrq);
                 }
-                if (newrqwriter && thd->iq != 0) {
-                    write_thd_count++;
+                if (thd->iq == 0) {
+                    /*wait for something to do, or go away after a while */
+                    listc_rfl(&busy, thd);
+                    thd_coalesce_check_ll();
+
+                    listc_atl(&idle, thd);
+
+                    rc = clock_gettime(CLOCK_REALTIME, &ts);
+                    if (rc != 0) {
+                        logmsg(LOGMSG_ERROR, "thd_req:clock_gettime bad rc %d:%s\n", rc,
+                                strerror(errno));
+                        memset(&ts, 0, sizeof(ts)); /*force failure later*/
+                    }
+
+                    ts.tv_sec += gbl_thd_linger;
+                    rc = 0;
+                    do {
+                        /*waitft thread will deposit a request in thd->iq*/
+                        rc = pthread_cond_timedwait(&thd->wakeup, &lock, &ts);
+                    } while (thd->iq == 0 && rc == 0);
+                    if (rc != 0 && rc != ETIMEDOUT) {
+                        logmsg(LOGMSG_ERROR, "thd_req:pthread_cond_timedwait "
+                                        "failed:%s\n",
+                                strerror(rc));
+                        /* error'd out, so i still have lock: errLOCK(&lock);*/
+                    }
+                    if (thd->iq == 0) /*nothing to do. this thread retires.*/
+                    {
+                        nretire++;
+                        listc_rfl(&idle, thd);
+                        Pthread_cond_destroy(&thd->wakeup);
+                        thd->tid =
+                            -2; /*returned. this is just for info & debugging*/
+                        pool_relablk(p_thds, thd); /*release this struct*/
+                        /**/
+                        retUNLOCK(&lock);
+                        /**/
+                        /*printf("ending handler %ld\n", pthread_self());*/
+                        delete_constraint_table(thdinfo->ct_add_table);
+                        delete_constraint_table(thdinfo->ct_del_table);
+                        delete_constraint_table(thdinfo->ct_add_index);
+                        backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
+                        return 0;
+                    }
                 }
-            }
-            if (thd->iq == 0) {
-                /*wait for something to do, or go away after a while */
-                listc_rfl(&busy, thd);
                 thd_coalesce_check_ll();
-
-                listc_atl(&idle, thd);
-
-                rc = clock_gettime(CLOCK_REALTIME, &ts);
-                if (rc != 0) {
-                    logmsg(LOGMSG_ERROR, "thd_req:clock_gettime bad rc %d:%s\n", rc,
-                            strerror(errno));
-                    memset(&ts, 0, sizeof(ts)); /*force failure later*/
-                }
-
-                ts.tv_sec += gbl_thd_linger;
-                rc = 0;
-                do {
-                    /*waitft thread will deposit a request in thd->iq*/
-                    rc = pthread_cond_timedwait(&thd->wakeup, &lock, &ts);
-                } while (thd->iq == 0 && rc == 0);
-                if (rc != 0 && rc != ETIMEDOUT) {
-                    logmsg(LOGMSG_ERROR, "thd_req:pthread_cond_timedwait "
-                                    "failed:%s\n",
-                            strerror(rc));
-                    /* error'd out, so i still have lock: errLOCK(&lock);*/
-                }
-                if (thd->iq == 0) /*nothing to do. this thread retires.*/
-                {
-                    nretire++;
-                    listc_rfl(&idle, thd);
-                    Pthread_cond_destroy(&thd->wakeup);
-                    thd->tid =
-                        -2; /*returned. this is just for info & debugging*/
-                    pool_relablk(p_thds, thd); /*release this struct*/
-                    /**/
-                    retUNLOCK(&lock);
-                    /**/
-                    /*printf("ending handler %ld\n", pthread_self());*/
-                    delete_constraint_table(thdinfo->ct_add_table);
-                    delete_constraint_table(thdinfo->ct_del_table);
-                    delete_constraint_table(thdinfo->ct_add_index);
-                    backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
-                    return 0;
-                }
             }
-            thd_coalesce_check_ll();
-        }
-        UNLOCK(&lock);
+            UNLOCK(&lock);
 
-        /* Should not be done under lock - might be expensive */
-        truncate_constraint_table(thdinfo->ct_add_table);
-        truncate_constraint_table(thdinfo->ct_del_table);
-        truncate_constraint_table(thdinfo->ct_add_index);
+            /* Should not be done under lock - might be expensive */
+            truncate_constraint_table(thdinfo->ct_add_table);
+            truncate_constraint_table(thdinfo->ct_del_table);
+            truncate_constraint_table(thdinfo->ct_add_index);
+        }
     } while (1);
 }
 
