@@ -444,9 +444,6 @@ static void *thd_req(void *vthd)
     }
     thdinfo->uniquetag = 0;
     thdinfo->ct_id_key = 0LL;
-    thdinfo->ct_add_table = NULL;
-    thdinfo->ct_del_table = NULL;
-    thdinfo->ct_add_index = NULL;
 
     thdinfo->ct_add_table = create_constraint_table();
     if (thdinfo->ct_add_table == NULL) {
@@ -615,46 +612,46 @@ static void *thd_req(void *vthd)
                         memset(&ts, 0, sizeof(ts)); /*force failure later*/
                     }
 
-                    ts.tv_sec += gbl_thd_linger;
-                    rc = 0;
-                    do {
-                        /*waitft thread will deposit a request in thd->iq*/
-                        rc = pthread_cond_timedwait(&thd->wakeup, &lock, &ts);
-                    } while (thd->iq == 0 && rc == 0);
-                    if (rc != 0 && rc != ETIMEDOUT) {
-                        logmsg(LOGMSG_ERROR, "thd_req:pthread_cond_timedwait "
-                                        "failed:%s\n",
-                                strerror(rc));
-                        /* error'd out, so i still have lock: errLOCK(&lock);*/
-                    }
-                    if (thd->iq == 0) /*nothing to do. this thread retires.*/
-                    {
-                        nretire++;
-                        listc_rfl(&idle, thd);
-                        Pthread_cond_destroy(&thd->wakeup);
-                        thd->tid =
-                            -2; /*returned. this is just for info & debugging*/
-                        pool_relablk(p_thds, thd); /*release this struct*/
-                        /**/
-                        retUNLOCK(&lock);
-                        /**/
-                        /*printf("ending handler %ld\n", pthread_self());*/
-                        delete_constraint_table(thdinfo->ct_add_table);
-                        delete_constraint_table(thdinfo->ct_del_table);
-                        delete_constraint_table(thdinfo->ct_add_index);
-                        backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
-                        return 0;
-                    }
+                ts.tv_sec += gbl_thd_linger;
+                rc = 0;
+                do {
+                    /*waitft thread will deposit a request in thd->iq*/
+                    rc = pthread_cond_timedwait(&thd->wakeup, &lock, &ts);
+                } while (thd->iq == 0 && rc == 0);
+                if (rc != 0 && rc != ETIMEDOUT) {
+                    logmsg(LOGMSG_ERROR, "thd_req:pthread_cond_timedwait "
+                                    "failed:%s\n",
+                            strerror(rc));
+                    /* error'd out, so i still have lock: errLOCK(&lock);*/
+                }
+                if (thd->iq == 0) /*nothing to do. this thread retires.*/
+                {
+                    nretire++;
+                    listc_rfl(&idle, thd);
+                    Pthread_cond_destroy(&thd->wakeup);
+                    thd->tid =
+                        -2; /*returned. this is just for info & debugging*/
+                    pool_relablk(p_thds, thd); /*release this struct*/
+                    /**/
+                    retUNLOCK(&lock);
+                    /**/
+                    /*printf("ending handler %ld\n", pthread_self());*/
+                    delete_constraint_table(thdinfo->ct_add_table);
+                    delete_constraint_table(thdinfo->ct_del_table);
+                    delete_constraint_table(thdinfo->ct_add_index);
+                    delete_defered_index_tbl();
+                    backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
+                    return 0;
                 }
                 thd_coalesce_check_ll();
             }
             UNLOCK(&lock);
 
-            /* Should not be done under lock - might be expensive */
-            truncate_constraint_table(thdinfo->ct_add_table);
-            truncate_constraint_table(thdinfo->ct_del_table);
-            truncate_constraint_table(thdinfo->ct_add_index);
-        }
+        /* Should not be done under lock - might be expensive */
+        truncate_constraint_table(thdinfo->ct_add_table);
+        truncate_constraint_table(thdinfo->ct_del_table);
+        truncate_constraint_table(thdinfo->ct_add_index);
+        truncate_defered_index_tbl();
     } while (1);
 }
 

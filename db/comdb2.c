@@ -132,6 +132,7 @@ void berk_memp_sync_alarm_ms(int);
 #include "time_accounting.h"
 #include <build/db.h>
 #include<seqnum_wait.h>
+#include "comdb2_ruleset.h"
 #define QUOTE_(x) #x
 #define QUOTE(x) QUOTE_(x)
 
@@ -161,6 +162,8 @@ int gbl_trigger_timepart = 0;
 int gbl_extended_sql_debug_trace = 0;
 extern int gbl_dump_fsql_response;
 int gbl_seqnum_wait_init_success = 1;
+struct ruleset *gbl_ruleset = NULL;
+
 void myctrace(const char *c) { ctrace("%s", c); }
 
 void berkdb_use_malloc_for_regions_with_callbacks(void *mem,
@@ -650,6 +653,7 @@ int gbl_broken_max_rec_sz = 0;
 int gbl_private_blkseq = 1;
 int gbl_use_blkseq = 1;
 int gbl_reorder_socksql_no_deadlock = 1;
+int gbl_reorder_idx_writes = 1;
 
 char *gbl_recovery_options = NULL;
 
@@ -727,7 +731,9 @@ int gbl_memstat_freq = 60 * 5;
 int gbl_accept_on_child_nets = 0;
 int gbl_disable_etc_services_lookup = 0;
 int gbl_fingerprint_queries = 1;
+int gbl_prioritize_queries = 1;
 int gbl_verbose_normalized_queries = 0;
+int gbl_verbose_prioritize_queries = 0;
 int gbl_stable_rootpages_test = 0;
 
 /* Only allows the ability to enable: must be enabled on a session via 'set' */
@@ -791,6 +797,7 @@ inline int getkeyrecnums(const dbtable *tbl, int ixnum)
         return -1;
     return tbl->ix_recnums[ixnum] != 0;
 }
+
 inline int getkeysize(const dbtable *tbl, int ixnum)
 {
     if (ixnum < 0 || ixnum >= tbl->nix)

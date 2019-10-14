@@ -183,7 +183,8 @@ done:
     if (t) {
         if (rc == 0) {
             seqnum_type seqnum;
-            rc = bdb_tran_commit_with_seqnum(bdb_state, t, &seqnum, &bdberr);
+            rc = bdb_tran_commit_with_seqnum_size(bdb_state, t, &seqnum, NULL,
+                                                  &bdberr);
             if (rc)
                 goto ret;
             rc = bdb_wait_for_seqnum_from_all(bdb_state, &seqnum);
@@ -235,18 +236,20 @@ static inline int print_verify_progress(verify_common_t *par, int now)
     }
 
     int rc;
-    if (par->verify_mode == VERIFY_DEFAULT) {
+    if (par->verify_mode == VERIFY_SERIAL) {
         rc = locprint(par->sb, par->lua_callback, par->lua_params,
-                      "!%s, did %lld records, %d per second\n", par->header,
+                      "!%s, did %d records, %d per second%s", par->header,
                       par->nrecs_progress,
-                      par->nrecs_progress / par->progress_report_seconds);
+                      par->nrecs_progress / par->progress_report_seconds,
+                      par->sb ? "\n" : "");
         par->nrecs_progress = 0;
     } else {
         unsigned long long delta = par->items_processed - par->saved_progress;
         rc = locprint(par->sb, par->lua_callback, par->lua_params,
-                      "!verify: processed %lld items, %d per second\n",
+                      "!verify: processed %lld items, %lld per second%s",
                       par->items_processed,
-                      delta / par->progress_report_seconds);
+                      delta / par->progress_report_seconds,
+                      par->sb ? "\n" : "");
         par->saved_progress = par->items_processed;
     }
 
@@ -1013,6 +1016,7 @@ static void bdb_verify_blob(verify_common_t *par, int blobno, int dtastripe,
 #ifdef _LINUX_SOURCE
         buf_put(&genid, sizeof(unsigned long long), (uint8_t *)&genid_flipped,
                 (uint8_t *)&genid_flipped + sizeof(unsigned long long));
+        genid_flipped = bdb_genid_to_host_order(genid);
 #else
         genid_flipped = genid;
 #endif
@@ -1168,7 +1172,8 @@ static inline void enqueue_work(td_processing_info_t *work,
 
     if (verify_thdpool) {
         int rc = thdpool_enqueue(verify_thdpool, bdb_verify_handler_work_pp,
-                                 work, 0, NULL, THDPOOL_FORCE_QUEUE);
+                                 work, 0, NULL, THDPOOL_FORCE_QUEUE,
+                                 PRIORITY_T_DEFAULT);
         if (rc) {
             logmsg(LOGMSG_ERROR,
                    "%s:thdpool_enqueue error, proceeding sequentially\n",
