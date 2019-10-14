@@ -646,9 +646,7 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
     case REP_SYNC_FULL:
         iq->gluewhere = "bdb_wait_for_seqnum_from_all";
         extern int gbl_seqnum_wait_init_success;
-        extern int from_purge_old_files;
-        // Don't want to enter here while purging old files.. Wait sequentially for that 
-        if(!from_purge_old_files && gbl_seqnum_wait_init_success){
+        if(gbl_seqnum_wait_init_success && iq->should_wait_async){
             if (adaptive){
                 iq->timeoutms = -1;
                 enqueued = add_to_seqnum_wait_queue(iq, bdb_handle, (seqnum_type *)ss, &iq->timeoutms, iq->txnsize,1); 
@@ -672,25 +670,25 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
             else
                 rc = bdb_wait_for_seqnum_from_all_timeout(
                     bdb_handle, (seqnum_type *)ss, timeoutms);
+            iq->gluewhere = "bdb_wait_for_seqnum_from_all done";
+            if (rc != 0) {
+                logmsg(LOGMSG_ERROR, "*WARNING* bdb_wait_seqnum:error syncing all nodes rc %d\n",
+                       rc);
+            }
+            if (iq->sc_pending) {
+                /* TODO: I dont know what to do here. Schema change is already
+                ** commited but one or more replicants didn't get the messages
+                ** to reload table.
+                */
+                logmsg(LOGMSG_INFO, "Schema change scdone sync all nodes, rc %d\n",
+                       rc);
+                rc = 0;
+            }
         }
         else{
-            rc = 0; // For now setting rc = 0, need to figure out what to set it as, and how to set it.
+            rc = BDBERR_NOERROR; // Since we have farmed-off the wait, we return no error here (Errors will be handled in separate asynchronous thread).
         }
 
-        iq->gluewhere = "bdb_wait_for_seqnum_from_all done";
-        if (rc != 0) {
-            logmsg(LOGMSG_ERROR, "*WARNING* bdb_wait_seqnum:error syncing all nodes rc %d\n",
-                   rc);
-        }
-        if (iq->sc_pending) {
-            /* TODO: I dont know what to do here. Schema change is already
-            ** commited but one or more replicants didn't get the messages
-            ** to reload table.
-            */
-            logmsg(LOGMSG_INFO, "Schema change scdone sync all nodes, rc %d\n",
-                   rc);
-            rc = 0;
-        }
         break;
 
     case REP_SYNC_ROOM:
@@ -709,7 +707,7 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
         break;
     }
 
-    if (bdb_attr_get(dbenv->bdb_attr, BDB_ATTR_COHERENCY_LEASE)) {
+    if (*(iq->is_wait_async)==0 && bdb_attr_get(dbenv->bdb_attr, BDB_ATTR_COHERENCY_LEASE)) {
         uint64_t now = gettimeofday_ms(), next_commit = next_commit_timestamp();
         if (next_commit > now)
             poll(0, 0, next_commit - now);
@@ -786,7 +784,7 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
     rc = trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, source_host,
                                    timeoutms, adaptive, &ss);
 
-    if (cnonce) {
+    if (*(iq->is_wait_asyn)==0 && cnonce) {
         DB_LSN *lsn = (DB_LSN *)&ss;
         logmsg(LOGMSG_USER,
                "%s %s line %d: wait_for_seqnum [%d][%d] returns %d\n", cnonce,

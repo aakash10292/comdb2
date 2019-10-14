@@ -70,7 +70,7 @@ enum seqnum_wait_state{
 }
 struct seqnum_wait{
     enum seqnum_wait_state cur_state;           // Cur state of the work item designating progress made on this work item. 
-    int cur_node_idx, now, cntbytes;
+    int  now, cntbytes;
     const char *nodelist[REPMAX];
     const char *connlist[REPMAX];
     int durable_lsns;
@@ -100,7 +100,6 @@ struct seqnum_wait{
     int num_successfully_acked;
     int total_connected;
     int lock_desired;
-
     struct ireq *iq;
     bdb_state_type *bdb_state;
     seqnum_type *seqnum;
