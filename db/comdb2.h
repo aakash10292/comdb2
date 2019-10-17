@@ -1449,7 +1449,8 @@ struct ireq {
     /* REVIEW COMMENTS AT BEGINING OF STRUCT BEFORE ADDING NEW VARIABLES */
     int num_reqs;
     int should_wait_async;
-    int *is_wait_async;
+    int is_wait_async;
+    int hascommitlock;
 };
 
 /* comdb array struct */

@@ -34,7 +34,7 @@
 #include "comdb2_plugin.h"
 #include "comdb2_opcode.h"
 
-static void pack_tail(struct ireq *iq);
+void pack_tail(struct ireq *iq);
 extern int glblroute_get_buffer_capacity(int *bf);
 extern int sorese_send_commitrc(struct ireq *iq, int rc);
 
@@ -192,7 +192,7 @@ retry:
        this ensures no requests replays will be left stuck
        papers around other short returns in toblock jic
        */
-    if(*(iq->is_wait_async)==0){
+    if(iq->is_wait_async==0){
         osql_blkseq_unregister(iq);
 
         Pthread_mutex_lock(&delay_lock);
@@ -295,7 +295,7 @@ int handle_ireq(struct ireq *iq)
 
     if (rc == RC_INTERNAL_FORWARD) {
         rc = 0;
-    } else if((*iq->is_wait_async)==0) {
+    } else if(iq->is_wait_async==0) {
         /* SNDBAK RESPONSE */
         if (iq->debug) {
             reqprintf(iq, "iq->reply_len=%td RC %d\n",
@@ -406,7 +406,7 @@ int handle_ireq(struct ireq *iq)
         }
     }
 
-    if((*iq->is_wait_async)==0){
+    if(iq->is_wait_async==0){
         /* Unblock anybody waiting for stuff that was added in this transaction. */
         clear_trans_from_repl_list(iq->repl_list);
 
@@ -448,7 +448,8 @@ int handle_ireq(struct ireq *iq)
     return rc;
 }
 
-static void pack_tail(struct ireq *iq)
+// making function non-static to be used in seqnum_wait.c
+void pack_tail(struct ireq *iq)
 {
     struct slt_cur_t *cur = NULL;
 

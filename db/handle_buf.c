@@ -493,8 +493,8 @@ static void *thd_req(void *vthd)
         // Introduced two flags into iq :
         // 1.) should_wait_async -> flag to determine if we should farmoff this request to be acked asynchronously
         // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
-        thd->iq.should_wait_async = 1; // By default we want it to be farmedoff... certain conditions (encountered later) might turn off this flag.
-        *(thd->iq->is_wait_async) = 0; // Default state is that it hasn't been farmed off. 
+        thd->iq->should_wait_async = 1; // By default we want it to be farmedoff... certain conditions (encountered later) might turn off this flag.
+        thd->iq->is_wait_async = 0; // Default state is that it hasn't been farmed off. 
         handle_ireq(thd->iq);
         if (debug_this_request(gbl_debug_until) ||
             (gbl_who > 0 && !gbl_sdebug)) {
@@ -514,7 +514,8 @@ static void *thd_req(void *vthd)
         comdb2bma_yield_all();
         // If this request was farmed off to be acked asynchronously, then the following work has already been done. No need to repeat/
         // If it hasn't, then commit was acked in line. We need to do the following work here: 
-        if(*(thd->iq->is_wait_async) == 0){
+        if(thd->iq->is_wait_async == 0)
+        {
             /*NEXT REQUEST*/
             LOCK(&lock)
             {
@@ -644,9 +645,10 @@ static void *thd_req(void *vthd)
                     return 0;
                 }
                 thd_coalesce_check_ll();
+                }
             }
             UNLOCK(&lock);
-
+        }
         /* Should not be done under lock - might be expensive */
         truncate_constraint_table(thdinfo->ct_add_table);
         truncate_constraint_table(thdinfo->ct_del_table);

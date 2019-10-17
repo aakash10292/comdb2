@@ -1,16 +1,52 @@
 #include<seqnum_wait.h>
+#include<osqlblkseq.h>
+#include<osqlblockproc.h>
+#include<translistener.h>
+#include<osqlcomm.h>
+#include<socket_interfaces.h>
+#include "comdb2.h"
 seqnum_wait_queue *work_queue = NULL;
 static pool_t *seqnum_wait_queue_pool = NULL;
 static pthread_mutex_t seqnum_wait_queue_pool_lk;
 pthread_mutex_t max_lsn_lk;
 int max_lsn;
-
+extern uint64_t coherency_commit_timestamp;
+extern pthread_rwlock_t commit_lock;
+extern struct dbenv *thedb;
+extern void (*comdb2_ipc_sndbak_len_sinfo)(struct ireq *, int);
+extern int gbl_print_deadlock_cycles;
+extern __thread snap_uid_t *osql_snap_info;
 void *queue_processor(void *);
 extern void osql_postcommit_handle(struct ireq *);
 extern void handle_postcommit_bpfunc(struct ireq *);
 extern void osql_postabort_handle(struct ireq *);
 extern void handle_postabort_bpfunc(struct ireq *);
 extern int bdb_wait_for_seqnum_from_all_int(bdb_state_type *bdb_state,seqnum_type *seqnum, int *timeoutms,uint64_t txnsize, int newcoh);
+extern int bdb_track_replication_time(bdb_state_type *bdb_state, seqnum_type *seqnum, const char *host);
+extern void bdb_slow_replicant_check(bdb_state_type *bdb_state,
+                                     seqnum_type *seqnum);
+extern int bdb_wait_for_seqnum_from_node_nowait_int(bdb_state_type *bdb_state,
+                                                    seqnum_type *seqnum,
+                                                    const char *host);
+
+extern int is_incoherent_complete(bdb_state_type *bdb_state,
+                                         const char *host, int *incohwait);
+extern void defer_commits(bdb_state_type *bdb_state, const char *host,
+                                 const char *func);
+
+extern int nodeix(const char *node);
+extern void set_coherent_state(bdb_state_type *bdb_state,
+                                      const char *hostname, int state,
+                                      const char *func, int line);
+extern void calculate_durable_lsn(bdb_state_type *bdb_state, DB_LSN *dlsn,
+                                  uint32_t *gen, uint32_t flags);
+extern unsigned long long osql_log_time(void);
+extern void block_state_free(block_state_t *p_blkstate);
+void pack_tail(struct ireq *iq);
+
+
+
+
 static struct seqnum_wait *allocate_seqnum_wait(void){
     struct seqnum_wait *s;
     Pthread_mutex_lock(&seqnum_wait_queue_pool_lk);
@@ -22,7 +58,8 @@ static struct seqnum_wait *allocate_seqnum_wait(void){
 int seqnum_wait_gbl_mem_init(){
     work_queue = (seqnum_wait_queue *)malloc(sizeof(seqnum_wait_queue));
     if(work_queue == NULL){
-
+        return 0;
+    }
     work_queue->next_commit_timestamp = INT_MIN;
     listc_init(&work_queue->lsn_list, offsetof(struct seqnum_wait, lsn_lnk));
     listc_init(&work_queue->absolute_ts_list, offsetof(struct seqnum_wait, absolute_ts_lnk));
@@ -39,13 +76,73 @@ int seqnum_wait_gbl_mem_init(){
 
     Pthread_mutex_init(&max_lsn_lk, NULL);
     max_lsn = 0;
-    return 0;
+    return 1;
 }
 
-int timestamp_compare(int ts1, int ts2){
+int ts_compare(int ts1, int ts2){
     if(ts1 < ts2) return -1;
     else if(ts1 > ts2) return 1;
     else return 0;
+}
+// Assumes that we already have lock on work_queue->mutex
+void add_to_lsn_list(struct seqnum_wait *item){
+    struct seqnum_wait *add_before_lsn = NULL;
+    LISTC_FOR_EACH(&work_queue->lsn_list,add_before_lsn,lsn_lnk)
+    {
+        if(log_compare(&(item->seqnum->lsn), &(add_before_lsn->seqnum->lsn)) <= 0){
+            listc_add_before(&(work_queue->lsn_list),item,add_before_lsn);
+            break;
+        }
+    }
+    
+    if(add_before_lsn == NULL){
+        // The new LSN is the highest yet... Adding to end of lsn list
+        listc_abl(&(work_queue->lsn_list), item);
+    }
+}
+
+// Assumes that we already have lock on work_queue->mutex
+void add_to_absolute_ts_list(struct seqnum_wait *item, int new_ts){
+    struct seqnum_wait *add_before_ts = NULL;
+    item->next_ts = new_ts;
+    // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again
+    LISTC_FOR_EACH(&work_queue->absolute_ts_list,add_before_ts,absolute_ts_lnk)
+    {
+        if(add_before_ts!=NULL && item!=add_before_ts && ts_compare(new_ts, add_before_ts->next_ts) <= 0){
+            if(item->absolute_ts_lnk.next == add_before_ts){
+                // item is already in the right place... nothing to do.
+                return;
+            }
+            // Make sure next and previous nodes of item are made to point to the correct nodes in the list
+            if(item->absolute_ts_lnk.prev!=NULL){
+                item->absolute_ts_lnk.prev->absolute_ts_lnk.next = item->absolute_ts_lnk.next;
+            }
+            if(item->absolute_ts_lnk.next!=NULL) {
+                item->absolute_ts_lnk.next->absolute_ts_lnk.prev = item->absolute_ts_lnk.prev;
+            }
+            if(new_ts == add_before_ts->next_ts){
+                // add item after add_before ( we want to follow FCFS for same next_ts)
+                listc_add_after(&work_queue->absolute_ts_list,item,add_before_ts);
+            }
+            else{
+                // add item before add_before
+                listc_add_before(&work_queue->absolute_ts_list,item,add_before_ts);
+            }
+            return;
+        }
+    }
+
+    if(add_before_ts == NULL){
+        // Make sure next and previous nodes of item are made to point to the correct nodes in the list
+        if(item->absolute_ts_lnk.prev!=NULL){
+            item->absolute_ts_lnk.prev->absolute_ts_lnk.next = item->absolute_ts_lnk.next;
+        }
+        if(item->absolute_ts_lnk.next!=NULL) {
+            item->absolute_ts_lnk.next->absolute_ts_lnk.prev = item->absolute_ts_lnk.prev;
+        }
+        // updated next timestamp for this item is the highest yet... Adding to end of absolute_ts_list
+        listc_abl(&work_queue->absolute_ts_list, item);
+    }
 }
 
 
@@ -53,7 +150,7 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     struct seqnum_wait *swait = allocate_seqnum_wait();
     if(swait==NULL){
         // Could not allocate memory...  return 0 here to relapse to waiting inline
-        *(iq->is_wait_async)=0;
+        iq->is_wait_async=0;
         return 0; 
     }
     int status = 0;
@@ -66,7 +163,7 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     swait->newcoh = newcoh;
     swait->do_slow_node_check = 0;
     swait->numfailed = 0;
-    swait->um_incoh = 0;
+    swait->num_incoh = 0;
     swait->we_used = 0;
     swait->base_node = NULL;
     swait->track_once = 1;
@@ -93,9 +190,9 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     Pthread_mutex_unlock(&(work_queue->mutex));
     // Signal seqnum_cond as the worker might be waiting on this condition.. 
     // We don't want the worker to wait needlessley i.e while there is still work to be done on the queue
-    Pthread_mutex_lock(&(bdb_state->attr->seqnum_info->lock));
+    Pthread_mutex_lock(&(bdb_state->seqnum_info->lock));
     Pthread_cond_broadcast(&(bdb_state->seqnum_info->cond));
-    Pthread_mutex_unlock(&(bdb_state->attr->seqnum_info->lock));
+    Pthread_mutex_unlock(&(bdb_state->seqnum_info->lock));
     return 0;
 }
 
@@ -105,14 +202,14 @@ void print_lists(){
     pthread_mutex_lock(&(work_queue->mutex));
     LISTC_FOR_EACH(&(work_queue->lsn_list),cur, lsn_lnk)
     {
-        printf("{LSN: %d|%d}",cur->seqnum->file,cur->seqnum->offset);
+        printf("{LSN: %d|%d}",cur->seqnum->lsn.file,cur->seqnum->lsn.offset);
         printf("->"); 
     }
     printf("\n");
     cur = NULL;
     LISTC_FOR_EACH(&(work_queue->absolute_ts_list),cur, absolute_ts_lnk)
     {
-        printf("{TS: %d|%d|%d}",cur->seqnum->file,cur->seqnum->offset,cur->next_ts);
+        printf("{TS: %d|%d|%d}",cur->seqnum->lsn.file,cur->seqnum->lsn.offset,cur->next_ts);
         printf("->"); 
     }
     printf("\n");
@@ -120,68 +217,10 @@ void print_lists(){
 }
 
 
-// Assumes that we already have lock on work_queue->mutex
-void add_to_lsn_list(struct seqnum_wait *item){
-    struct seqnum_wait *add_before_lsn = NULL;
-    LISTC_FOR_EACH(&work_queue->lsn_list,add_before_lsn,lsn_lnk)
-    {
-        if(log_compare(&(item->seqnum->lsn), &(add_before_lsn->seqnum->lsn)) <= 0){
-            listc_add_before(&(work_queue->lsn_list),swait,add_before_lsn);
-            break;
-        }
-    }
-    
-    if(add_before_lsn == NULL){
-        // The new LSN is the highest yet... Adding to end of lsn list
-        listc_abl(&(work_queue->lsn_list), swait);
-    }
-}
 
-// Assumes that we already have lock on work_queue->mutex
-void add_to_absolute_ts_list(struct seqnum_wait *item, int new_ts){
-    struct seqnum_wait *add_before_ts = NULL;
-    item->next_ts = new_ts;
-    // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again
-    LISTC_FOR_EACH(&work_queue->absolute_ts_list,add_before_ts,absolute_ts_lnk)
-    {
-        if(add_before_ts!=NULL && item!=add_before_ts && ts_compare(new_ts, add_before_ts->next_ts) <= 0){
-            if(item->absolute_ts_lnk.next = add_before_ts){
-                // item is already in the right place... nothing to do.
-                return;
-            }
-            // Make sure next and previous nodes of item are made to point to the correct nodes in the list
-            if(item->absolute_ts_lnk.prev!=NULL){
-                item->absolute_ts_lnk.prev.next = item->absolute_ts_lnk.next;
-            }
-            if(item->absolute_ts_lnk.next!=NULL) {
-                item->absolute_ts_lnk.next.prev = item->absolute_ts_lnk.prev;
-            }
-            if(new_ts == add_before_ts->next_ts){
-                // add item after add_before ( we want to follow FCFS for same next_ts)
-                listc_add_after(&work_queue->absolute_ts_list,item,add_before_ts);
-            }
-            else{
-                // add item before add_before
-                listc_add_before(&work_queue->absolute_ts_list,item,add_before_lsn);
-            }
-            return;
-        }
-    }
-
-    if(add_before_ts == NULL){
-        // Make sure next and previous nodes of item are made to point to the correct nodes in the list
-        if(item->absolute_ts_lnk.prev!=NULL){
-            item->absolute_ts_lnk.prev.next = item->absolute_ts_lnk.next;
-        }
-        if(item->absolute_ts_lnk.next!=NULL) {
-            item->absolute_ts_lnk.next.prev = item->absolute_ts_lnk.prev;
-        }
-        // updated next timestamp for this item is the highest yet... Adding to end of absolute_ts_list
-        listc_abl(&work_queue->absolute_ts_list, item);
-    }
-}
 
 void process_work_item(struct seqnum_wait *item){
+    extern pthread_mutex_t slow_node_check_lk;
     switch(item->cur_state){
         case INIT:
             /* if we were passed a child, find his parent*/
@@ -189,12 +228,12 @@ void process_work_item(struct seqnum_wait *item){
             item->bdb_state = item->bdb_state->parent;
 
             /* short circuit if we are waiting on lsn 0:0  */
-            if((item->seqnum->lsn_file == 0) && (item->seqnum->lsn.offset == 0))
+            if((item->seqnum->lsn.file == 0) && (item->seqnum->lsn.offset == 0))
             {
                 // Do stuff corresponding to rc=0 in bdb_wait_for_seqnum_from_all_int
             }
             logmsg(LOGMSG_DEBUG, "%s waiting for %s\n", __func__, lsn_to_str(item->str, &(item->seqnum->lsn)));
-            item->begin_time = comdb2_time_epochms();
+            item->start_time = comdb2_time_epochms();
 
             if (item->track_once && item->bdb_state->attr->track_replication_times) {
                 item->track_once = 0;
@@ -210,7 +249,7 @@ void process_work_item(struct seqnum_wait *item){
                 if (item->now - item->last_slow_node_check_time > 1000) {
                     if (item->bdb_state->attr->track_replication_times) {
                         item->last_slow_node_check_time = item->now;
-                        item->do_slow_node_check = 1
+                        item->do_slow_node_check = 1;
                     }
                 }
                 Pthread_mutex_unlock(&slow_node_check_lk);
@@ -226,21 +265,21 @@ void process_work_item(struct seqnum_wait *item){
             // We're done with INIT state.. Move to FIRST_ACK and fall through this case.
             item->cur_state = FIRST_ACK;
         case FIRST_ACK:
-            if(comdb2_time_epochms() - item->begin_time < item->bdb_state->attr->rep_timeout_maxms &&
-                    !(lock_desired = bdb_lock_desired(item->bdb_state))){
+            if(comdb2_time_epochms() - item->start_time < item->bdb_state->attr->rep_timeout_maxms &&
+                    !(item->lock_desired = bdb_lock_desired(item->bdb_state))){
                 item->numnodes = 0;
                 item->numskip = 0;
                 item->numwait = 0;
 
                 if(item->durable_lsns){
-                    item->total_connected = net_get_sanctioned_replicants(item->bdb_state->rep_info->netinfo, REPMAX, item->connlist);
+                    item->total_connected = net_get_sanctioned_replicants(item->bdb_state->repinfo->netinfo, REPMAX, item->connlist);
                 } else {
-                    item->total_connected = net_get_all_commissioned_nodes(item->bdb_state->rep_info->netinfo, item->connlist); 
+                    item->total_connected = net_get_all_commissioned_nodes(item->bdb_state->repinfo->netinfo, item->connlist); 
                 }
                 if (item->total_connected == 0){
                     /* nobody is there to wait for! */
                     item->cur_state = DONE_WAIT;
-                    goto case DONE_WAIT;
+                    goto done_wait_label;
                 }
                 for (int i = 0; i < item->total_connected; i++) {
                     int wait = 0;
@@ -257,7 +296,7 @@ void process_work_item(struct seqnum_wait *item){
                 }
 
                 if (item->numnodes == 0) {
-                    goto case done_wait;
+                    goto done_wait_label;
                 }
                 int new_ts = 0;
                 item->cur_state = FIRST_ACK;
@@ -266,7 +305,7 @@ void process_work_item(struct seqnum_wait *item){
                         logmsg(LOGMSG_USER,
                                "checking for initial NEWSEQ from node %s of >= <%s>\n",
                                item->nodelist[i], lsn_to_str(item->str, &(item->seqnum->lsn)));    
-                    rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)]), item->nodelist[i]);
+                    int rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)]), item->nodelist[i]);
                     if(rc == 0){
                         item->got_ack_from_atleast_one_node = 1;
                         item->base_node = item->nodelist[i];
@@ -276,7 +315,7 @@ void process_work_item(struct seqnum_wait *item){
                         item->waitms = item->we_used * item->bdb_state->attr->rep_timeout_lag / 100;
                         if (item->waitms < item->bdb_state->attr->rep_timeout_minms){
                             // If the first node responded really fast, we don't want to impose too harsh a timeout on the remaining nodes
-                            waitms = item->bdb_state->attr->rep_timeout_minms;
+                            item->waitms = item->bdb_state->attr->rep_timeout_minms;
                         }
                         if (item->bdb_state->rep_trace)
                             logmsg(LOGMSG_USER, "fastest node to <%s> was %dms, will wait "
@@ -284,7 +323,7 @@ void process_work_item(struct seqnum_wait *item){
                                     lsn_to_str(item->str, &(item->seqnum->lsn)), item->we_used, item->waitms);
                         // WE got first ack.. move to next state.. 
                         item->cur_state = GOT_FIRST_ACK;
-                        goto case GOT_FIRST_ACK;
+                        goto got_first_ack_label;
                     }
                 }
                 // If we get here, then none of the replicants have caught up yet, 
@@ -298,7 +337,7 @@ void process_work_item(struct seqnum_wait *item){
               }
            else{
                // Either we timed out, or someone else is asking for bdb lock i.e master swing
-               if(lock_desired){
+               if(item->lock_desired){
                    logmsg(LOGMSG_WARN,"lock desired, not waiting for initial replication of <%s>\n", lsn_to_str(item->str, &(item->seqnum->lsn)));
                    // Not gonna wait for anymore acks...Set rcode and go to DONE_WAIT;
                    if(item->durable_lsns){
@@ -308,18 +347,18 @@ void process_work_item(struct seqnum_wait *item){
                        item->outrc = -1;
                    }
                    item->cur_state = DONE_WAIT;
-                   goto case DONE_WAIT;
+                   goto done_wait_label;
                }
                // we timed out i.e exceeded bdb->attr->rep_timeout_maxms
                logmsg(LOGMSG_WARN, "timed out waiting for initial replication of <%s>\n",
                        lsn_to_str(item->str, &(item->seqnum->lsn)));
                item->end_time = comdb2_time_epochms(); 
-               item->we_used = item->end_time - item->begin_time;
+               item->we_used = item->end_time - item->start_time;
                item->waitms = 0; // We've already exceeded max timeout... Not gonna wait anymore
                *(item->timeoutms) = item->we_used + item->waitms;
                item->cur_state = GOT_FIRST_ACK;
            } 
-        case GOT_FIRST_ACK:
+        case GOT_FIRST_ACK: got_first_ack_label:
            // Either we've received first ack or we've timed out
             item->numfailed = 0;
             int acked = 0;
@@ -330,7 +369,7 @@ void process_work_item(struct seqnum_wait *item){
                     logmsg(LOGMSG_USER,
                            "checking for NEWSEQ from node %s of >= <%s> timeout %d\n",
                            item->nodelist[i], lsn_to_str(item->str, &(item->seqnum->lsn)), item->waitms);
-                rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)]), item->nodelist[i]);
+                int rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)]), item->nodelist[i]);
                 if (bdb_lock_desired(item->bdb_state)) {
                     logmsg(LOGMSG_ERROR,
                            "%s line %d early exit because lock-is-desired\n", __func__,
@@ -342,7 +381,7 @@ void process_work_item(struct seqnum_wait *item){
                        item->outrc = -1;
                     }
                     item->cur_state = DONE_WAIT;
-                    goto case DONE_WAIT;
+                    goto done_wait_label;
                 }
                 if (rc == -999){
                     logmsg(LOGMSG_WARN, "node %s hasn't caught up yet, base node "
@@ -361,14 +400,14 @@ void process_work_item(struct seqnum_wait *item){
                 // Awesome! Everyone's caught up. 
                 item->num_successfully_acked += acked; 
                 item->cur_state = DONE_WAIT;
-                goto case DONE_WAIT;
+                goto done_wait_label;
             }
             else{
                 //If we are still within waitms timeout, we still have hope! 
                 //Modify position of item appropriately in absolute_ts_list
-                if(comdb2_time_epochms() - item->begin_time() < item->waitms){
+                if(comdb2_time_epochms() - item->start_time < item->waitms){
                     item->previous_ts = comdb2_time_epochms();
-                    new_ts = comdb2_time_epochms() + waitms;
+                    new_ts = comdb2_time_epochms() + item->waitms;
                     // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again 
                     Pthread_mutex_lock(&(work_queue->mutex));
                     add_to_absolute_ts_list(item, new_ts);
@@ -388,7 +427,7 @@ void process_work_item(struct seqnum_wait *item){
                             logmsg(LOGMSG_USER,
                                    "checking for NEWSEQ from node %s of >= <%s> timeout %d\n",
                                    item->nodelist[i], lsn_to_str(item->str, &(item->seqnum->lsn)), item->waitms);
-                        rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)]), item->nodelist[i]);
+                        int rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)]), item->nodelist[i]);
                         if (bdb_lock_desired(item->bdb_state)) {
                             logmsg(LOGMSG_ERROR,
                                    "%s line %d early exit because lock-is-desired\n", __func__,
@@ -400,7 +439,7 @@ void process_work_item(struct seqnum_wait *item){
                                item->outrc = -1;
                             }
                             item->cur_state = DONE_WAIT;
-                            goto case DONE_WAIT;
+                            goto done_wait_label;
                         }
                         if (rc == -999){
                             logmsg(LOGMSG_WARN, "node %s hasn't caught up yet, base node "
@@ -413,25 +452,25 @@ void process_work_item(struct seqnum_wait *item){
                             item->nodelsn = item->bdb_state->seqnum_info->seqnums[nodeix(item->nodelist[i])].lsn;
                             Pthread_mutex_unlock(&(item->bdb_state->seqnum_info->lock));
                             // We now mark the node incoherent
-                            Pthread_mutex_lock(&(bdb_state->coherent_state_lock));
-                            if(item->bdb_state->coherent_state[nodeix(nodelist[i])] == STATE_COHERENT){
+                            Pthread_mutex_lock(&(item->bdb_state->coherent_state_lock));
+                            if(item->bdb_state->coherent_state[nodeix(item->nodelist[i])] == STATE_COHERENT){
                                 defer_commits(item->bdb_state, item->nodelist[i], __func__);
-                                if(item->bdb_state->attr->catchup_on_commit && catchup_window){
-                                    item->masterlsn = &(item->bdb_state->seqnum_info->seqnums[nodiex(item->bdb_state->repinfo->master_host)].lsn);
+                                if(item->bdb_state->attr->catchup_on_commit && item->catchup_window){
+                                    item->masterlsn = &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)].lsn);
                                     item->cntbytes = subtract_lsn(item->bdb_state, item->masterlsn, &(item->nodelsn));
-                                    set_coherent_state(item->bdb_state, item->nodelist[i], (item->cntbytes < catchup_window)?STATE_INCOHERENT_WAIT: STATE_INCOHERENT,__func__, __line__);
+                                    set_coherent_state(item->bdb_state, item->nodelist[i], (item->cntbytes < item->catchup_window)?STATE_INCOHERENT_WAIT: STATE_INCOHERENT,__func__, __LINE__);
    
                                 }
                                 else{
-                                    set_coherent_state(item->bdb_state, item->nodelist[i], STATE_INCOHERENT,__func__, __line__);
+                                    set_coherent_state(item->bdb_state, item->nodelist[i], STATE_INCOHERENT,__func__, __LINE__);
                                 }
                                 // change next_commit_timestamp for the work queue, if new value of coherency_commit_timestamp is larger,
                                 //  than current value of coherency_commit_timestamp 
                                 work_queue->next_commit_timestamp = (work_queue->next_commit_timestamp < coherency_commit_timestamp)?coherency_commit_timestamp:work_queue->next_commit_timestamp;
-                                item->bdb_state->last_downgrade_time[nodeix(nodelist[i])] = gettimeofday_ms();
+                                item->bdb_state->last_downgrade_time[nodeix(item->nodelist[i])] = gettimeofday_ms();
                                 item->bdb_state->repinfo->skipsinceepoch = comdb2_time_epoch();
                             }
-                            Pthread_mutex_unlock(&(bdb_state->coherent_state_lock));
+                            Pthread_mutex_unlock(&(item->bdb_state->coherent_state_lock));
                             
                         }
                         else if (rc == 0){
@@ -439,10 +478,10 @@ void process_work_item(struct seqnum_wait *item){
                         }
                     }
                     item->cur_state = DONE_WAIT;
-                    goto case DONE_WAIT;
+                    goto done_wait_label;
                 }
             }
-        case DONE_WAIT:
+        case DONE_WAIT: done_wait_label:
             if (!item->numfailed && !item->numskip && !item->numwait &&
                 item->bdb_state->attr->remove_commitdelay_on_coherent_cluster &&
                 item->bdb_state->attr->commitdelay) {
@@ -481,6 +520,7 @@ void process_work_item(struct seqnum_wait *item){
                      * we were waiting for this to propogate.  The simple fix: get
                      * rep_gen & return
                      * not durable if it's changed */
+                    bdb_state_type *bdb_state = item->bdb_state;// Need this so that macro below can work correctly
                     BDB_READLOCK("wait_for_seqnum");
                     item->bdb_state->dbenv->get_rep_gen(item->bdb_state->dbenv, &cur_gen);
                     BDB_RELLOCK();
@@ -529,23 +569,23 @@ void process_work_item(struct seqnum_wait *item){
                         calc_lsn.file, calc_lsn.offset, calc_gen);
                 }
             }
-            int now = comdb2_time_epochms;
+            int now = comdb2_time_epochms();
             Pthread_mutex_lock(&(work_queue->mutex));
             if(now > work_queue->next_commit_timestamp){
                 // We're safe to commit and return control to client
                 item->cur_state = COMMIT;
-                goto case COMMIT;
+                goto commit_label;
             }
             else{
                 item->cur_state = COMMIT;
-                add_to_absolute_ts_list(item, commit_time);
+                add_to_absolute_ts_list(item, work_queue->next_commit_timestamp);
                 break;
             }
             Pthread_mutex_unlock(&(work_queue->mutex));
-        case COMMIT:
-            if(iq->hascommitlock){
+        case COMMIT: commit_label:
+            if(item->iq->hascommitlock){
                 Pthread_rwlock_unlock(&commit_lock);
-                iq->hascommitlock = 0;
+                item->iq->hascommitlock = 0;
             }
             if (item->outrc == 0) {
                 /* Committed new sqlite_stat1 statistics from analyze - reload sqlite
@@ -559,18 +599,18 @@ void process_work_item(struct seqnum_wait *item){
             } else {
                 item->iq->dbenv->txns_aborted++;
             }
-            bdb_checklock(thedb->dbenv);    
+            bdb_checklock(thedb->bdb_env);    
             item->iq->timings.req_finished = osql_log_time();
             item->iq->timings.retries++;
             osql_blkseq_unregister(item->iq);
 
             javasp_trans_end(item->iq->jsph);
-            block_state_free(&(iq->blkstate));
+            block_state_free(item->iq->blkstate);
 
 
             // Send back the response -> code reference db/sltdbt.c line 297
             if(item->iq->debug){
-                reqprintf(iq, "iq->reply_len=%td RC %d\n",
+                reqprintf(item->iq, "iq->reply_len=%td RC %d\n",
                           (ptrdiff_t) (item->iq->p_buf_out - item->iq->p_buf_out_start), item->outrc);
             }
             /* pack data at tail of reply */
@@ -610,51 +650,51 @@ void process_work_item(struct seqnum_wait *item){
                            "\n Unexpected error %d in block operation", item->outrc);
                 }
             } else if (item->iq->is_fromsocket) {
-                net_delay(iq->frommach);
+                net_delay(item->iq->frommach);
                 /* process socket end request */
-                if (iq->is_socketrequest) {
-                    if (iq->sb == NULL) {
-                        rc = offload_comm_send_blockreply(
-                            iq->frommach, iq->rqid, iq->p_buf_out_start,
-                            iq->p_buf_out - iq->p_buf_out_start, rc);
-                        free_bigbuf_nosignal(iq->p_buf_out_start);
+                if (item->iq->is_socketrequest) {
+                    if (item->iq->sb == NULL) {
+                        item->outrc = offload_comm_send_blockreply(
+                            item->iq->frommach, item->iq->rqid, item->iq->p_buf_out_start,
+                            item->iq->p_buf_out - item->iq->p_buf_out_start, item->outrc);
+                        free_bigbuf_nosignal(item->iq->p_buf_out_start);
                     } else {
                         /* The tag request is handled locally.
                            We know for sure `request_data' is a `buf_lock_t'. */
                         struct buf_lock_t *p_slock =
-                            (struct buf_lock_t *)iq->request_data;
+                            (struct buf_lock_t *)item->iq->request_data;
                         {
                             Pthread_mutex_lock(&p_slock->req_lock);
                             if (p_slock->reply_state == REPLY_STATE_DISCARD) {
                                 Pthread_mutex_unlock(&p_slock->req_lock);
                                 cleanup_lock_buffer(p_slock);
-                                free_bigbuf_nosignal(iq->p_buf_out_start);
+                                free_bigbuf_nosignal(item->iq->p_buf_out_start);
                             } else {
                                 sndbak_open_socket(
-                                    iq->sb, iq->p_buf_out_start,
-                                    iq->p_buf_out - iq->p_buf_out_start, rc);
-                                free_bigbuf(iq->p_buf_out_start, iq->request_data);
+                                    item->iq->sb, item->iq->p_buf_out_start,
+                                    item->iq->p_buf_out - item->iq->p_buf_out_start, item->outrc);
+                                free_bigbuf(item->iq->p_buf_out_start, item->iq->request_data);
                                 Pthread_mutex_unlock(&p_slock->req_lock);
                             }
                         }
                     }
-                    iq->request_data = iq->p_buf_out_start = NULL;
+                    item->iq->request_data = item->iq->p_buf_out_start = NULL;
                 } else {
-                    sndbak_socket(iq->sb, iq->p_buf_out_start,
-                                  iq->p_buf_out - iq->p_buf_out_start, rc);
-                    free(iq->p_buf_out_start);
+                    sndbak_socket(item->iq->sb, item->iq->p_buf_out_start,
+                                  item->iq->p_buf_out - item->iq->p_buf_out_start, item->outrc);
+                    free(item->iq->p_buf_out_start);
                 }
-                iq->p_buf_out_end = iq->p_buf_out_start = iq->p_buf_out = NULL;
-                iq->p_buf_in_end = iq->p_buf_in = NULL;
+                item->iq->p_buf_out_end = item->iq->p_buf_out_start = item->iq->p_buf_out = NULL;
+                item->iq->p_buf_in_end = item->iq->p_buf_in = NULL;
             } else if (comdb2_ipc_sndbak_len_sinfo) {
-                comdb2_ipc_sndbak_len_sinfo(iq, rc);
+                comdb2_ipc_sndbak_len_sinfo(item->iq, item->outrc);
             }
             /* Unblock anybody waiting for stuff that was added in this transaction. */
             clear_trans_from_repl_list(item->iq->repl_list);
 
             /* records were added to queues, and we committed successfully.  wake
              * up queue consumers. */
-            if (item->rc == 0 && item->iq->num_queues_hit > 0) {
+            if (item->outrc == 0 && item->iq->num_queues_hit > 0) {
                 if (item->iq->num_queues_hit > MAX_QUEUE_HITS_PER_TRANS) {
                     /* good heavens.  wake up all consumers */
                     dbqueuedb_wake_all_consumers_all_queues(item->iq->dbenv, 0);
@@ -695,41 +735,42 @@ void *queue_processor(void *arg){
     int wait_rc = 0;
     while(1){
         Pthread_mutex_lock(&(work_queue->mutex));
-        while(listc_size(work_queue->lsn_list)==0)){
+        while(listc_size(&(work_queue->lsn_list))==0){
             Pthread_cond_wait(&(work_queue->cond),&(work_queue->mutex));
         }
         Pthread_mutex_unlock(&(work_queue->mutex));
         // if timed_wait below resulted in a timeout, we need to go over absolute_ts_list
         if(wait_rc == ETIMEDOUT){
             Pthread_mutex_lock(&(work_queue->mutex));
-            item = LISTC_TOP(work_queue->absolute_ts_list);
+            item = LISTC_TOP(&(work_queue->absolute_ts_list));
             Pthread_mutex_unlock(&(work_queue->mutex));
-            while(item!=NULL && (item->next_ts <= comdb2_time_epochms)){
+            while(item!=NULL && (item->next_ts <= comdb2_time_epochms())){
                 process_work_item(item);
                 Pthread_mutex_lock(&(work_queue->mutex));
-                item = item.absolute_ts_lnk->next;
+                item = item->absolute_ts_lnk.next;
                 Pthread_mutex_unlock(&(work_queue->mutex));
-            
+            }
         }
         else{
             // wait_rc == 0, which means either this is the first run of infinite while loop , or..
             // the timed_wait below was signalled...i.e... we got new seqnum -> we iterate over lsn_list upto max_lsn_seen 
             Pthread_mutex_lock(&(work_queue->mutex));
-            item = LISTC_TOP(work_queue->lsn_list);
+            item = LISTC_TOP(&(work_queue->lsn_list));
             Pthread_mutex_unlock(&(work_queue->mutex));
             while(item!=NULL){
                 process_work_item(item);
                 Pthread_mutex_lock(&(work_queue->mutex));
-                item = item.lsn_lnk->next;
+                item = item->lsn_lnk.next;
                 Pthread_mutex_unlock(&(work_queue->mutex));
             }
         }
         // Check first item on absolute_ts_list 
         Pthread_mutex_lock(&(work_queue->mutex));
-        item = LISTC_TOP(work_queue->absolute_ts_list);
+        item = LISTC_TOP(&(work_queue->absolute_ts_list));
         Pthread_mutex_unlock(&(work_queue->mutex));
-        if(item!=null){
-            if(comdb2_time_epochms <  item->next_ts){
+        if(item!=NULL){
+            int now = comdb2_time_epochms();
+            if(now <  item->next_ts){
                 // we are early, wait till the earliest time that a node has to be checked
                 // Or, till we get signalled by got_new_seqnum_from_node
                 setup_waittime(&waittime, now-item->next_ts);
@@ -749,16 +790,21 @@ void *queue_processor(void *arg){
 }
 
 void seqnum_wait_cleanup(){
-    struct seqnum_wait *item, *tmp;
-    listc_t *list_ptr = (listc_t *)&seqnum_wait_queue;
+    struct seqnum_wait *item = NULL;
 
     //FREE THE WORK QUEUE
-    pthread_mutex_lock(&seqnum_wait_queue_lk);
-    LISTC_FOR_EACH_SAFE(list_ptr, item, tmp, lnk)
-        free(listc_rfl(&seqnum_wait_queue, item));
+    pthread_mutex_lock(&work_queue->mutex);
+    LISTC_FOR_EACH(&work_queue->absolute_ts_list,item,absolute_ts_lnk)
+    {
+        free(listc_rfl(&work_queue->absolute_ts_list, item));
+    }
 
-    listc_free((listc_t *)&seqnum_wait_queue);
-    pthread_mutex_unlock(&seqnum_wait_queue_lk);
+    LISTC_FOR_EACH(&work_queue->lsn_list,item,lsn_lnk)
+    {
+        free(listc_rfl(&work_queue->lsn_list, item));
+    }
+
+    pthread_mutex_unlock(&work_queue->mutex);
 
     // FREE THE MEM POOL
     pthread_mutex_lock(&seqnum_wait_queue_pool_lk);
