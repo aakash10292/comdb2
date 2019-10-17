@@ -777,6 +777,7 @@ static int block_state_restore(struct ireq *iq, block_state_t *p_blkstate)
 /**
  * Release all the resources held by a block_state.
  */
+// making function non-static, to be used in seqnum_wait.c
 static void block_state_free(block_state_t *p_blkstate)
 {
     free(p_blkstate->p_buf_saved_start);
@@ -1967,7 +1968,7 @@ int toblock(struct ireq *iq)
     }
 
     rc = toblock_outer(iq, &blkstate);
-    if(*iq->is_wait_async)==0)
+    if(iq->is_wait_async==0)
         block_state_free(&blkstate);
 
     return rc;
@@ -2265,7 +2266,7 @@ static int toblock_outer(struct ireq *iq, block_state_t *blkstate)
             /* if he's still working for me, try again */
             if (working_for == my_tid) {
                 if (retry_count > 100) {
-                    poll(0,0(rand() % 25 + 1));
+                    poll(0,0,(rand() % 25 + 1));
                 }
                 retry_count++;
 
@@ -2284,7 +2285,7 @@ static int toblock_outer(struct ireq *iq, block_state_t *blkstate)
         Pthread_mutex_unlock(&(iq->dbenv->prefault_helper.mutex));
     }
 
-    if(*(iq->is_wait_async)==0)
+    if(iq->is_wait_async==0)
         javasp_trans_end(iq->jsph);
     return rc;
 }
@@ -2425,7 +2426,7 @@ static void backout_and_abort_tranddl(struct ireq *iq, tran_type *parent,
         iq->should_wait_async = 0;
         rc = trans_commit_logical(iq, iq->sc_logical_tran, gbl_mynode, 0, 1,
                                   NULL, 0, NULL, 0);
-        iq->shold_wait_async = 1;
+        iq->should_wait_async = 1;
         if (rc != 0) {
             logmsg(LOGMSG_ERROR, "%s:%d TRANS_ABORT FAILED RC %d", __func__,
                    __LINE__, rc);
@@ -5593,7 +5594,7 @@ add_blkseq:
                     iq->hascommitlock = hascommitlock;
                     irc = trans_commit_adaptive(iq, parent_trans, source_host);
                 }
-                if(*(iq->is_wait_async)==0){
+                if(iq->is_wait_async==0){
                     if (irc) {
                         /* We've committed to the btree, but we are not replicated:
                          * ask the the client to retry */
@@ -5717,7 +5718,7 @@ add_blkseq:
                     iq, trans, gbl_mynode, 0, 1, buf_fstblk,
                     p_buf_fstblk - buf_fstblk + sizeof(int), bskey, bskeylen);
 
-                if(*(iq->is_wait_async)==0){
+                if(iq->is_wait_async==0){
                     if (hascommitlock) {
                         Pthread_rwlock_unlock(&commit_lock);
                         hascommitlock = 0;
@@ -5799,7 +5800,7 @@ add_blkseq:
                 iq->hascommitlock = hascommitlock;
                 irc = trans_commit_logical(iq, trans, gbl_mynode, 0, 1, NULL, 0,
                                            NULL, 0);
-                if(*(iq->is_wait_async)==0){
+                if(iq->is_wait_async==0){
                     if (irc == BDBERR_NOT_DURABLE)
                         irc = ERR_NOT_DURABLE;
 
@@ -5816,16 +5817,16 @@ add_blkseq:
                 iq->should_wait_async = 1;
                 iq->hascommitlock = hascommitlock;
                 irc = trans_commit_adaptive(iq, trans, source_host);
-                if (*(iq->is_wait_async)==0 && irc == BDBERR_NOT_DURABLE)
+                if (iq->is_wait_async==0 && irc == BDBERR_NOT_DURABLE)
                     irc = rc = ERR_NOT_DURABLE;
             }
-            if (*(iq->is_wait_async)==0 && hascommitlock) {
+            if (iq->is_wait_async==0 && hascommitlock) {
                 Pthread_rwlock_unlock(&commit_lock);
                 hascommitlock = 0;
             }
         }
 
-        if (*(iq->is_wait_async)==0 && rc != 0) {
+        if (iq->is_wait_async==0 && rc != 0) {
             if (iq->debug)
                 reqprintf(iq, "%p:PARENT TRANSACTION COMMIT FAILED RC %d",
                           parent_trans, rc);
@@ -5849,7 +5850,7 @@ add_blkseq:
 
     /* At this stage it's not a replay so we either committed a transaction
      * or we had to abort. */
-    if((*iq->is_wait_async) == 0){
+    if(iq->is_wait_async== 0){
         // If we haven't farmed off this transaction to be acked asynchronously,.. 
         if (outrc == 0) {
             /* Committed new sqlite_stat1 statistics from analyze - reload sqlite
@@ -5909,7 +5910,7 @@ add_blkseq:
 cleanup:
     logmsg(LOGMSG_DEBUG, "%s cleanup did_replay:%d fromline:%d\n", __func__,
            did_replay, fromline);
-    if(*(iq->is_wait_async)==0){
+    if(iq->is_wait_async==0){
         bdb_checklock(thedb->bdb_env);
 
         iq->timings.req_finished = osql_log_time();
@@ -5984,7 +5985,7 @@ static int toblock_main(struct javasp_trans_state *javasp_trans_handle,
     rc = toblock_main_int(javasp_trans_handle, iq, p_blkstate);
     uint64_t end = gettimeofday_ms();
 
-    if(*(iq->is_wait_async)==0){
+    if(iq->is_wait_async==0){
         if (rc == 0) {
             osql_postcommit_handle(iq);
             handle_postcommit_bpfunc(iq);

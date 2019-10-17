@@ -67,7 +67,7 @@ enum seqnum_wait_state{
     GOT_FIRST_ACK,
     DONE_WAIT,
     COMMIT
-}
+};
 struct seqnum_wait{
     enum seqnum_wait_state cur_state;           // Cur state of the work item designating progress made on this work item. 
     int  now, cntbytes;
@@ -90,7 +90,7 @@ struct seqnum_wait{
     int reset_wait_time; 
     int remaining_wait_time;
     struct timespec wait_time;
-    int begin_time , end_time;
+    int start_time , end_time;
     int we_used;
     const char *base_node;
     char str[80];
@@ -107,6 +107,7 @@ struct seqnum_wait{
     uint64_t txnsize;
     int newcoh;
     int got_ack_from_atleast_one_node;
+    int last_slow_node_check_time;
     LINKC_T(struct seqnum_wait) lsn_lnk;
     LINKC_T(struct seqnum_wait) absolute_ts_lnk;
 };

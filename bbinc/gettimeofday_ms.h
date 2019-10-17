@@ -4,7 +4,7 @@
 #include <sys/time.h>
 #include <stdlib.h>
 
-static inline uint64_t gettimeofday_ms()
+inline uint64_t gettimeofday_ms()
 {
     struct timeval t;
     gettimeofday(&t, NULL);
