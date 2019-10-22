@@ -646,6 +646,7 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
     case REP_SYNC_FULL:
         iq->gluewhere = "bdb_wait_for_seqnum_from_all";
         extern int gbl_seqnum_wait_init_success;
+        printf("gbl_seqnum_wait_init_success: %d\niq->should_wait_async: %d\n", gbl_seqnum_wait_init_success, iq->should_wait_async);
         if(gbl_seqnum_wait_init_success && iq->should_wait_async){
             if (adaptive){
                 iq->timeoutms = -1;

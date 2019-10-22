@@ -57,7 +57,8 @@ enum THD_EV { THD_EV_END = 0, THD_EV_START = 1 };
 
 /* request pool & queue */
 
-static pool_t *p_reqs; /* request pool */
+// making non-static, to be used in seqnum_wait.c
+pool_t *p_reqs; /* request pool */
 
 struct dbq_entry_t {
     LINKC_T(struct dbq_entry_t) qlnk;
@@ -99,8 +100,8 @@ int handle_buf_main(
     void *data_hndl, // handle to data that can be used according to request
                      // type
     int luxref, unsigned long long rqid);
-
-static pthread_mutex_t lock;
+//removing static, to be used in seqnum_wait.c
+pthread_mutex_t lock;
 pthread_mutex_t buf_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_attr_t attr;
 
@@ -617,32 +618,14 @@ static void *thd_req(void *vthd)
                             strerror(rc));
                     /* error'd out, so i still have lock: errLOCK(&lock);*/
                 }
-                if (thd->iq == 0) /*nothing to do. this thread retires.*/
-                {
-                    nretire++;
-                    listc_rfl(&idle, thd);
-                    Pthread_cond_destroy(&thd->wakeup);
-                    thd->tid =
-                        -2; /*returned. this is just for info & debugging*/
-                    pool_relablk(p_thds, thd); /*release this struct*/
-                    /**/
-                    retUNLOCK(&lock);
-                    /**/
-                    /*printf("ending handler %ld\n", pthread_self());*/
-                    delete_constraint_table(thdinfo->ct_add_table);
-                    delete_constraint_table(thdinfo->ct_del_table);
-                    delete_constraint_table(thdinfo->ct_add_index);
-                    delete_defered_index_tbl();
-                    backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
-                    return 0;
+                if (newrqwriter && thd->iq != 0) {
+                    write_thd_count++;
                 }
             }
             thd_coalesce_check_ll();
         }
         UNLOCK(&lock);
 
-        /* Should not be done under lock - might be expensive */
-        truncate_constraint_table(thdinfo->ct_add_table);
         truncate_constraint_table(thdinfo->ct_del_table);
         truncate_constraint_table(thdinfo->ct_add_index);
         truncate_defered_index_tbl();

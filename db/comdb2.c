@@ -5551,7 +5551,7 @@ int main(int argc, char **argv)
         return 1;
     }
     //CLEAN UP SEQNUM_STUFF
-    seqnum_wait_cleanup();
+    //seqnum_wait_cleanup();
     return 0;
 }
 

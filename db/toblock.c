@@ -778,7 +778,7 @@ static int block_state_restore(struct ireq *iq, block_state_t *p_blkstate)
  * Release all the resources held by a block_state.
  */
 // making function non-static, to be used in seqnum_wait.c
-static void block_state_free(block_state_t *p_blkstate)
+void block_state_free(block_state_t *p_blkstate)
 {
     free(p_blkstate->p_buf_saved_start);
     p_blkstate->p_buf_saved_start = NULL;
@@ -1968,7 +1968,7 @@ int toblock(struct ireq *iq)
     }
 
     rc = toblock_outer(iq, &blkstate);
-    if(iq->is_wait_async==0)
+    //if(iq->is_wait_async==0)
         block_state_free(&blkstate);
 
     return rc;
@@ -2285,7 +2285,7 @@ static int toblock_outer(struct ireq *iq, block_state_t *blkstate)
         Pthread_mutex_unlock(&(iq->dbenv->prefault_helper.mutex));
     }
 
-    if(iq->is_wait_async==0)
+    //if(iq->is_wait_async==0)
         javasp_trans_end(iq->jsph);
     return rc;
 }
@@ -2363,8 +2363,8 @@ static int extract_blkseq2(struct ireq *iq, block_state_t *p_blkstate,
     }
     return 0;
 }
-
-static pthread_rwlock_t commit_lock = PTHREAD_RWLOCK_INITIALIZER;
+//making below non-static, to be used in seqnum_wait.c
+pthread_rwlock_t commit_lock = PTHREAD_RWLOCK_INITIALIZER;
 
 
 void handle_postcommit_bpfunc(struct ireq *iq)

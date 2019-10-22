@@ -191,7 +191,7 @@ retry:
        this ensures no requests replays will be left stuck
        papers around other short returns in toblock jic
        */
-    if(iq->is_wait_async==0){
+    //if(iq->is_wait_async==0){
         osql_blkseq_unregister(iq);
 
         Pthread_mutex_lock(&delay_lock);
@@ -199,7 +199,7 @@ retry:
         gbl_maxwthreadpenalty -= totpen;
 
         Pthread_mutex_unlock(&delay_lock);
-    }
+    //}
 
     /* return codes we think the proxy understands.  all other cases
        return proxy retry */
