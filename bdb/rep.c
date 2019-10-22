@@ -470,7 +470,7 @@ char *coherent_state_to_str(int state)
 
 /* You should have the lock */
 // making this function non-static, to be used in seqnum_wait.c
-inline void set_coherent_state(bdb_state_type *bdb_state,
+void set_coherent_state(bdb_state_type *bdb_state,
                                       const char *hostname, int state,
                                       const char *func, int line)
 {
@@ -635,7 +635,7 @@ static void send_context_to_all(bdb_state_type *bdb_state)
     }
 }
 
-inline int is_incoherent_complete(bdb_state_type *bdb_state,
+int is_incoherent_complete(bdb_state_type *bdb_state,
                                          const char *host, int *incohwait)
 {
     int is_incoherent, state;
@@ -1832,7 +1832,7 @@ uint64_t next_commit_timestamp(void)
 /* Make sure that nothing commits before the timestamp set here.
  * This is called when a node changes to from STATE_COHERENT to
  * any other state.  The coherent_state_lock will be held. */
-inline void defer_commits_int(bdb_state_type *bdb_state,
+void defer_commits_int(bdb_state_type *bdb_state,
                                      const char *host, const char *func,
                                      int forupgrade)
 {
@@ -1853,7 +1853,7 @@ inline void defer_commits_int(bdb_state_type *bdb_state,
            host ? host : "<all>", r.tm_hour, r.tm_min, r.tm_sec, coms);
 }
 // making the function non-static, to be used in seqnum_wait.c
-inline void defer_commits(bdb_state_type *bdb_state, const char *host,
+void defer_commits(bdb_state_type *bdb_state, const char *host,
                                  const char *func)
 {
     defer_commits_int(bdb_state, host, func, 0);

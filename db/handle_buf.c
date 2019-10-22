@@ -58,7 +58,8 @@ enum THD_EV { THD_EV_END = 0, THD_EV_START = 1 };
 
 /* request pool & queue */
 
-static pool_t *p_reqs; /* request pool */
+// making non-static, to be used in seqnum_wait.c
+pool_t *p_reqs; /* request pool */
 
 struct dbq_entry_t {
     LINKC_T(struct dbq_entry_t) qlnk;
@@ -100,8 +101,8 @@ int handle_buf_main(
     void *data_hndl, // handle to data that can be used according to request
                      // type
     int luxref, unsigned long long rqid);
-
-static pthread_mutex_t lock;
+//removing static, to be used in seqnum_wait.c
+pthread_mutex_t lock;
 pthread_mutex_t buf_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_attr_t attr;
 
@@ -510,22 +511,22 @@ static void *thd_req(void *vthd)
         thrman_origin(thr_self, NULL);
         thrman_where(thr_self, "idle");
         thd->iq->where = "done executing";
-        // before acquiring next request, yield
-        comdb2bma_yield_all();
-        // If this request was farmed off to be acked asynchronously, then the following work has already been done. No need to repeat/
-        // If it hasn't, then commit was acked in line. We need to do the following work here: 
-        if(thd->iq->is_wait_async == 0)
+        if(thd->iq->is_wait_async == 0){
+            // before acquiring next request, yield
+            comdb2bma_yield_all();
+        }
+        /*NEXT REQUEST*/
+        LOCK(&lock)
         {
-            /*NEXT REQUEST*/
-            LOCK(&lock)
-            {
-                struct dbq_entry_t *nxtrq = NULL;
-                int newrqwriter = 0;
+            struct dbq_entry_t *nxtrq = NULL;
+            int newrqwriter = 0;
 
-                if (iamwriter) {
-                    write_thd_count--;
-                }
-
+            if (iamwriter) {
+                write_thd_count--;
+            }
+            // If this request was farmed off to be acked asynchronously, then the following work has already been done. No need to repeat/
+            // If it hasn't, then commit was acked in line. We need to do the following work here: 
+            if(thd->iq->is_wait_async == 0){
                 if (thd->iq->usedb && thd->iq->ixused >= 0 &&
                     thd->iq->ixused < thd->iq->usedb->nix &&
                     thd->iq->usedb->ixuse) {
@@ -560,95 +561,95 @@ static void *thd_req(void *vthd)
 #endif
                 pool_relablk(p_reqs, thd->iq); /* this request is done, so release
                                                 * resource. */
-                /* get next item off hqueue */
-                nxtrq = (struct dbq_entry_t *)listc_rtl(&q_reqs);
-                thd->iq = 0;
-                if (nxtrq != 0) {
-                    thd->iq = nxtrq->obj;
-                    newrqwriter = is_req_write(thd->iq->opcode) ? 1 : 0;
+            }
+            /* get next item off hqueue */
+            nxtrq = (struct dbq_entry_t *)listc_rtl(&q_reqs);
+            thd->iq = 0;
+            if (nxtrq != 0) {
+                thd->iq = nxtrq->obj;
+                newrqwriter = is_req_write(thd->iq->opcode) ? 1 : 0;
 
-                    numwriterthreads = gbl_maxwthreads - gbl_maxwthreadpenalty;
-                    if (numwriterthreads < 1)
-                        numwriterthreads = 1;
+                numwriterthreads = gbl_maxwthreads - gbl_maxwthreadpenalty;
+                if (numwriterthreads < 1)
+                    numwriterthreads = 1;
 
-                    if (newrqwriter &&
-                        (write_thd_count - iothreads) >= numwriterthreads) {
-                        /* dont process next request as it goes over
-                           the write limit..put it back on queue and grab
-                           next read */
-                        listc_atl(&q_reqs, nxtrq);
-                        nxtrq = (struct dbq_entry_t *)listc_rtl(&rq_reqs);
-                        if (nxtrq != NULL) {
-                            listc_rfl(&q_reqs, nxtrq);
-                            /* release the memory block of the link */
-                            thd->iq = nxtrq->obj;
-                            pool_relablk(pq_reqs, nxtrq);
-                            newrqwriter = 0;
-                        } else {
-                            thd->iq = 0;
-                        }
-                    } else {
-                        if (!newrqwriter) {
-                            /*get rid of new request from read queue */
-                            listc_rfl(&rq_reqs, nxtrq);
-                        }
+                if (newrqwriter &&
+                    (write_thd_count - iothreads) >= numwriterthreads) {
+                    /* dont process next request as it goes over
+                       the write limit..put it back on queue and grab
+                       next read */
+                    listc_atl(&q_reqs, nxtrq);
+                    nxtrq = (struct dbq_entry_t *)listc_rtl(&rq_reqs);
+                    if (nxtrq != NULL) {
+                        listc_rfl(&q_reqs, nxtrq);
                         /* release the memory block of the link */
+                        thd->iq = nxtrq->obj;
                         pool_relablk(pq_reqs, nxtrq);
+                        newrqwriter = 0;
+                    } else {
+                        thd->iq = 0;
                     }
-                    if (newrqwriter && thd->iq != 0) {
-                        write_thd_count++;
+                } else {
+                    if (!newrqwriter) {
+                        /*get rid of new request from read queue */
+                        listc_rfl(&rq_reqs, nxtrq);
                     }
+                    /* release the memory block of the link */
+                    pool_relablk(pq_reqs, nxtrq);
                 }
-                if (thd->iq == 0) {
-                    /*wait for something to do, or go away after a while */
-                    listc_rfl(&busy, thd);
-                    thd_coalesce_check_ll();
-
-                    listc_atl(&idle, thd);
-
-                    rc = clock_gettime(CLOCK_REALTIME, &ts);
-                    if (rc != 0) {
-                        logmsg(LOGMSG_ERROR, "thd_req:clock_gettime bad rc %d:%s\n", rc,
-                                strerror(errno));
-                        memset(&ts, 0, sizeof(ts)); /*force failure later*/
-                    }
-
-                ts.tv_sec += gbl_thd_linger;
-                rc = 0;
-                do {
-                    /*waitft thread will deposit a request in thd->iq*/
-                    rc = pthread_cond_timedwait(&thd->wakeup, &lock, &ts);
-                } while (thd->iq == 0 && rc == 0);
-                if (rc != 0 && rc != ETIMEDOUT) {
-                    logmsg(LOGMSG_ERROR, "thd_req:pthread_cond_timedwait "
-                                    "failed:%s\n",
-                            strerror(rc));
-                    /* error'd out, so i still have lock: errLOCK(&lock);*/
-                }
-                if (thd->iq == 0) /*nothing to do. this thread retires.*/
-                {
-                    nretire++;
-                    listc_rfl(&idle, thd);
-                    Pthread_cond_destroy(&thd->wakeup);
-                    thd->tid =
-                        -2; /*returned. this is just for info & debugging*/
-                    pool_relablk(p_thds, thd); /*release this struct*/
-                    /**/
-                    retUNLOCK(&lock);
-                    /**/
-                    /*printf("ending handler %ld\n", pthread_self());*/
-                    delete_constraint_table(thdinfo->ct_add_table);
-                    delete_constraint_table(thdinfo->ct_del_table);
-                    delete_constraint_table(thdinfo->ct_add_index);
-                    delete_defered_index_tbl();
-                    backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
-                    return 0;
-                }
-                thd_coalesce_check_ll();
+                if (newrqwriter && thd->iq != 0) {
+                    write_thd_count++;
                 }
             }
-            UNLOCK(&lock);
+            if (thd->iq == 0) {
+                /*wait for something to do, or go away after a while */
+                listc_rfl(&busy, thd);
+                thd_coalesce_check_ll();
+
+                listc_atl(&idle, thd);
+
+                rc = clock_gettime(CLOCK_REALTIME, &ts);
+                if (rc != 0) {
+                    logmsg(LOGMSG_ERROR, "thd_req:clock_gettime bad rc %d:%s\n", rc,
+                            strerror(errno));
+                    memset(&ts, 0, sizeof(ts)); /*force failure later*/
+                }
+
+            ts.tv_sec += gbl_thd_linger;
+            rc = 0;
+            do {
+                /*waitft thread will deposit a request in thd->iq*/
+                rc = pthread_cond_timedwait(&thd->wakeup, &lock, &ts);
+            } while (thd->iq == 0 && rc == 0);
+            if (rc != 0 && rc != ETIMEDOUT) {
+                logmsg(LOGMSG_ERROR, "thd_req:pthread_cond_timedwait "
+                                "failed:%s\n",
+                        strerror(rc));
+                /* error'd out, so i still have lock: errLOCK(&lock);*/
+            }
+            if (thd->iq == 0) /*nothing to do. this thread retires.*/
+            {
+                nretire++;
+                listc_rfl(&idle, thd);
+                Pthread_cond_destroy(&thd->wakeup);
+                thd->tid =
+                    -2; /*returned. this is just for info & debugging*/
+                pool_relablk(p_thds, thd); /*release this struct*/
+                /**/
+                retUNLOCK(&lock);
+                /**/
+                /*printf("ending handler %ld\n", pthread_self());*/
+                delete_constraint_table(thdinfo->ct_add_table);
+                delete_constraint_table(thdinfo->ct_del_table);
+                delete_constraint_table(thdinfo->ct_add_index);
+                delete_defered_index_tbl();
+                backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
+                return 0;
+            }
+            thd_coalesce_check_ll();
+            }
         }
+        UNLOCK(&lock);
         /* Should not be done under lock - might be expensive */
         truncate_constraint_table(thdinfo->ct_add_table);
         truncate_constraint_table(thdinfo->ct_del_table);

@@ -4,7 +4,10 @@
 #include<translistener.h>
 #include<osqlcomm.h>
 #include<socket_interfaces.h>
+#include<gettimeofday_ms.h>
+#include<lockmacros.h>
 #include "comdb2.h"
+#include <mem.h>
 seqnum_wait_queue *work_queue = NULL;
 static pool_t *seqnum_wait_queue_pool = NULL;
 static pthread_mutex_t seqnum_wait_queue_pool_lk;
@@ -13,35 +16,40 @@ int max_lsn;
 extern uint64_t coherency_commit_timestamp;
 extern pthread_rwlock_t commit_lock;
 extern struct dbenv *thedb;
+extern pool_t *p_reqs;
 extern void (*comdb2_ipc_sndbak_len_sinfo)(struct ireq *, int);
 extern int gbl_print_deadlock_cycles;
 extern __thread snap_uid_t *osql_snap_info;
+extern pthread_mutex_t lock;
 void *queue_processor(void *);
-extern void osql_postcommit_handle(struct ireq *);
-extern void handle_postcommit_bpfunc(struct ireq *);
-extern void osql_postabort_handle(struct ireq *);
-extern void handle_postabort_bpfunc(struct ireq *);
-extern int bdb_wait_for_seqnum_from_all_int(bdb_state_type *bdb_state,seqnum_type *seqnum, int *timeoutms,uint64_t txnsize, int newcoh);
-extern int bdb_track_replication_time(bdb_state_type *bdb_state, seqnum_type *seqnum, const char *host);
-extern void bdb_slow_replicant_check(bdb_state_type *bdb_state,
+
+
+void osql_postcommit_handle(struct ireq *);
+void handle_postcommit_bpfunc(struct ireq *);
+void osql_postabort_handle(struct ireq *);
+void handle_postabort_bpfunc(struct ireq *);
+int bdb_wait_for_seqnum_from_all_int(bdb_state_type *bdb_state,seqnum_type *seqnum, int *timeoutms,uint64_t txnsize, int newcoh);
+int bdb_track_replication_time(bdb_state_type *bdb_state, seqnum_type *seqnum, const char *host);
+
+void bdb_slow_replicant_check(bdb_state_type *bdb_state,
                                      seqnum_type *seqnum);
-extern int bdb_wait_for_seqnum_from_node_nowait_int(bdb_state_type *bdb_state,
+int bdb_wait_for_seqnum_from_node_nowait_int(bdb_state_type *bdb_state,
                                                     seqnum_type *seqnum,
                                                     const char *host);
 
-extern int is_incoherent_complete(bdb_state_type *bdb_state,
+int is_incoherent_complete(bdb_state_type *bdb_state,
                                          const char *host, int *incohwait);
-extern void defer_commits(bdb_state_type *bdb_state, const char *host,
+void defer_commits(bdb_state_type *bdb_state, const char *host,
                                  const char *func);
 
-extern int nodeix(const char *node);
-extern void set_coherent_state(bdb_state_type *bdb_state,
+int nodeix(const char *node);
+void set_coherent_state(bdb_state_type *bdb_state,
                                       const char *hostname, int state,
                                       const char *func, int line);
-extern void calculate_durable_lsn(bdb_state_type *bdb_state, DB_LSN *dlsn,
+void calculate_durable_lsn(bdb_state_type *bdb_state, DB_LSN *dlsn,
                                   uint32_t *gen, uint32_t flags);
-extern unsigned long long osql_log_time(void);
-extern void block_state_free(block_state_t *p_blkstate);
+unsigned long long osql_log_time(void);
+void block_state_free(block_state_t *p_blkstate);
 void pack_tail(struct ireq *iq);
 
 
@@ -55,14 +63,25 @@ static struct seqnum_wait *allocate_seqnum_wait(void){
     return s;
 }
 
+static int deallocate_seqnum_wait(struct seqnum_wait *item){
+    int rc = 0;
+    Pthread_mutex_lock(&seqnum_wait_queue_pool_lk);
+    rc = pool_relablk(seqnum_wait_queue_pool, item);
+    Pthread_mutex_unlock(&seqnum_wait_queue_pool_lk); 
+    return rc;
+}
+
 int seqnum_wait_gbl_mem_init(){
+   // return -1;
     work_queue = (seqnum_wait_queue *)malloc(sizeof(seqnum_wait_queue));
     if(work_queue == NULL){
-        return 0;
+        return -1;
     }
     work_queue->next_commit_timestamp = INT_MIN;
     listc_init(&work_queue->lsn_list, offsetof(struct seqnum_wait, lsn_lnk));
     listc_init(&work_queue->absolute_ts_list, offsetof(struct seqnum_wait, absolute_ts_lnk));
+    pthread_mutex_init(&(work_queue->mutex), NULL);
+    pthread_cond_init(&(work_queue->cond), NULL);
     
     pthread_t dummy_tid;
     pthread_attr_t attr;
@@ -76,7 +95,7 @@ int seqnum_wait_gbl_mem_init(){
 
     Pthread_mutex_init(&max_lsn_lk, NULL);
     max_lsn = 0;
-    return 1;
+    return 0;
 }
 
 int ts_compare(int ts1, int ts2){
@@ -153,7 +172,6 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
         iq->is_wait_async=0;
         return 0; 
     }
-    int status = 0;
     swait->cur_state = INIT;
     swait->iq = iq;
     swait->bdb_state = bdb_state;
@@ -173,12 +191,8 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     swait->catchup_window = bdb_state->attr->catchup_window;
     swait->next_ts = comdb2_time_epochms();
 
-    status = pthread_mutex_lock(&(work_queue->mutex));
-    if (status != 0){
-        fprintf(stderr,"Error while getting lock at %s:%d\n",__FILE__,__LINE__);
-        free(swait);
-        return status;
-    }
+    printf("locking at %d: \n",__LINE__);
+    Pthread_mutex_lock(&(work_queue->mutex));
     // Add to the lsn list in increasing order of LSN 
     printf("Adding to lsn list\n");
     add_to_lsn_list(swait);
@@ -187,18 +201,39 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     add_to_absolute_ts_list(swait, swait->next_ts);
     work_queue->size += 1;
     Pthread_cond_signal(&(work_queue->cond));
+    printf("unlocking\nt %d: \n", __LINE__);
     Pthread_mutex_unlock(&(work_queue->mutex));
     // Signal seqnum_cond as the worker might be waiting on this condition.. 
     // We don't want the worker to wait needlessley i.e while there is still work to be done on the queue
     Pthread_mutex_lock(&(bdb_state->seqnum_info->lock));
     Pthread_cond_broadcast(&(bdb_state->seqnum_info->cond));
     Pthread_mutex_unlock(&(bdb_state->seqnum_info->lock));
-    return 0;
+    return 1;
 }
+// assumes work_queue->mutex lock held
+void remove_from_seqnum_wait_queue(struct seqnum_wait *item){
+    listc_rfl(&work_queue->absolute_ts_list, item);
+    listc_rfl(&work_queue->lsn_list, item);
+}
+
+// removes the work item from the two lists, and returns memory back to mempool
+int free_work_item(struct seqnum_wait *item){
+    int rc = 0;
+    // First remove item from the two lists;
+    Pthread_mutex_lock(&work_queue->mutex);
+    remove_from_seqnum_wait_queue(item);
+    Pthread_mutex_unlock(&work_queue->mutex);
+
+    // Return memory to mempool
+    rc = deallocate_seqnum_wait(item);
+    return rc;
+}
+
 
 //Utility method to print the work_queue
 void print_lists(){
     struct seqnum_wait *cur = NULL;
+    printf("locking at %d: \n",__LINE__);
     pthread_mutex_lock(&(work_queue->mutex));
     LISTC_FOR_EACH(&(work_queue->lsn_list),cur, lsn_lnk)
     {
@@ -213,6 +248,7 @@ void print_lists(){
         printf("->"); 
     }
     printf("\n");
+    printf("unlocking at %d: \n",__LINE__);
     pthread_mutex_unlock(&(work_queue->mutex));
 }
 
@@ -329,8 +365,10 @@ void process_work_item(struct seqnum_wait *item){
                 // If we get here, then none of the replicants have caught up yet, 
                 // Let's wait for one second and check again.
                 new_ts = comdb2_time_epochms() + 1000;
+                printf("locking at %d: \n",__LINE__);
                 Pthread_mutex_lock(&(work_queue->mutex));
                 add_to_absolute_ts_list(item, new_ts);
+                printf("unlocking at %d: \n",__LINE__);
                 Pthread_mutex_unlock(&(work_queue->mutex));
                 // We break out of the switch as we are done processing this item (for now)
                 break;
@@ -407,10 +445,11 @@ void process_work_item(struct seqnum_wait *item){
                 //Modify position of item appropriately in absolute_ts_list
                 if(comdb2_time_epochms() - item->start_time < item->waitms){
                     item->previous_ts = comdb2_time_epochms();
-                    new_ts = comdb2_time_epochms() + item->waitms;
                     // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again 
+                    printf("locking at %d: \n",__LINE__);
                     Pthread_mutex_lock(&(work_queue->mutex));
-                    add_to_absolute_ts_list(item, new_ts);
+                    add_to_absolute_ts_list(item, comdb2_time_epochms() + item->waitms);
+                    printf("unlocking at %d: \n",__LINE__);
                     Pthread_mutex_unlock(&(work_queue->mutex));
                     // We break out and handle next iten in the work queue
                     break;
@@ -570,8 +609,11 @@ void process_work_item(struct seqnum_wait *item){
                 }
             }
             int now = comdb2_time_epochms();
+            printf("locking at %d: \n",__LINE__);
             Pthread_mutex_lock(&(work_queue->mutex));
             if(now > work_queue->next_commit_timestamp){
+            printf("unlocking at %d: \n",__LINE__);
+                Pthread_mutex_unlock(&(work_queue->mutex));
                 // We're safe to commit and return control to client
                 item->cur_state = COMMIT;
                 goto commit_label;
@@ -579,9 +621,10 @@ void process_work_item(struct seqnum_wait *item){
             else{
                 item->cur_state = COMMIT;
                 add_to_absolute_ts_list(item, work_queue->next_commit_timestamp);
+            printf("unlocking at %d: \n",__LINE__);
+                Pthread_mutex_unlock(&(work_queue->mutex));
                 break;
             }
-            Pthread_mutex_unlock(&(work_queue->mutex));
         case COMMIT: commit_label:
             if(item->iq->hascommitlock){
                 Pthread_rwlock_unlock(&commit_lock);
@@ -604,8 +647,8 @@ void process_work_item(struct seqnum_wait *item){
             item->iq->timings.retries++;
             osql_blkseq_unregister(item->iq);
 
-            javasp_trans_end(item->iq->jsph);
-            block_state_free(item->iq->blkstate);
+            //javasp_trans_end(item->iq->jsph);
+            //block_state_free(item->iq->blkstate);
 
 
             // Send back the response -> code reference db/sltdbt.c line 297
@@ -710,7 +753,7 @@ void process_work_item(struct seqnum_wait *item){
                 osql_bplog_reqlog_queries(item->iq);
             }
             reqlog_end_request(item->iq->reqlogger, item->outrc, __func__, __LINE__);
-            release_node_stats(NULL, NULL, item->iq->frommach);
+            //release_node_stats(NULL, NULL, item->iq->frommach);
             if (gbl_print_deadlock_cycles)
                 osql_snap_info = NULL;
 
@@ -723,8 +766,49 @@ void process_work_item(struct seqnum_wait *item){
             }
 
             /* Make sure we do not leak locks */
-            bdb_checklock(thedb->bdb_env);
-            
+            bdb_checklock(thedb->bdb_env); 
+            comdb2bma_yield_all();
+            LOCK(&lock)
+            {
+                if (item->iq->usedb && item->iq->ixused >= 0 &&
+                    item->iq->ixused < item->iq->usedb->nix &&
+                    item->iq->usedb->ixuse) {
+                    item->iq->usedb->ixuse[item->iq->ixused] += item->iq->ixstepcnt;
+                }
+                item->iq->ixused = -1;
+                item->iq->ixstepcnt = 0;
+
+                if (item->iq->dbglog_file) {
+                    sbuf2close(item->iq->dbglog_file);
+                    item->iq->dbglog_file = NULL;
+                }
+                if (item->iq->nwrites) {
+                    free(item->iq->nwrites);
+                    item->iq->nwrites = NULL;
+                }
+                if (item->iq->vfy_genid_hash) {
+                    hash_free(item->iq->vfy_genid_hash);
+                    item->iq->vfy_genid_hash = NULL;
+                }
+                if (item->iq->vfy_genid_pool) {
+                    pool_free(item->iq->vfy_genid_pool);
+                    item->iq->vfy_genid_pool = NULL;
+                }
+                if (item->iq->sorese.osqllog) {
+                    sbuf2close(item->iq->sorese.osqllog);
+                    item->iq->sorese.osqllog = NULL;
+                }
+                item->iq->vfy_genid_track = 0;
+#if 0
+                fprintf(stderr, "%s:%d: THD=%d relablk iq=%p\n", __func__, __LINE__, pthread_self(), item->iq);
+#endif
+                pool_relablk(p_reqs, item->iq); /* this request is done, so release
+                                                * resource. */
+            }
+            UNLOCK(&lock);
+            // We are done handling this request completely.
+            item->cur_state = FREE; 
+            break;
 
     }// End of Switch
 }
@@ -733,40 +817,60 @@ void *queue_processor(void *arg){
     struct seqnum_wait *item = NULL;
     struct timespec waittime;
     int wait_rc = 0;
+    printf("Starting seqnum_wait worker thread");
     while(1){
+                printf("locking at %d: \n",__LINE__);
         Pthread_mutex_lock(&(work_queue->mutex));
         while(listc_size(&(work_queue->lsn_list))==0){
+                printf("unlocking at %d: \n",__LINE__);
             Pthread_cond_wait(&(work_queue->cond),&(work_queue->mutex));
+                printf("locking at %d: \n",__LINE__);
         }
+                printf("unlocking at %d: \n",__LINE__);
         Pthread_mutex_unlock(&(work_queue->mutex));
         // if timed_wait below resulted in a timeout, we need to go over absolute_ts_list
         if(wait_rc == ETIMEDOUT){
+                printf("locking at %d: \n",__LINE__);
             Pthread_mutex_lock(&(work_queue->mutex));
             item = LISTC_TOP(&(work_queue->absolute_ts_list));
+                printf("unlocking at %d: \n",__LINE__);
             Pthread_mutex_unlock(&(work_queue->mutex));
             while(item!=NULL && (item->next_ts <= comdb2_time_epochms())){
-                process_work_item(item);
+                if (item->cur_state == FREE){
+                    free_work_item(item);
+                }
+                else{
+                    process_work_item(item);
+                }
+                printf("locking at %d: \n",__LINE__);
                 Pthread_mutex_lock(&(work_queue->mutex));
                 item = item->absolute_ts_lnk.next;
+                printf("unlocking at %d: \n",__LINE__);
                 Pthread_mutex_unlock(&(work_queue->mutex));
             }
         }
         else{
             // wait_rc == 0, which means either this is the first run of infinite while loop , or..
             // the timed_wait below was signalled...i.e... we got new seqnum -> we iterate over lsn_list upto max_lsn_seen 
+                printf("locking at %d: \n",__LINE__);
             Pthread_mutex_lock(&(work_queue->mutex));
             item = LISTC_TOP(&(work_queue->lsn_list));
+                printf("unlocking at %d: \n",__LINE__);
             Pthread_mutex_unlock(&(work_queue->mutex));
             while(item!=NULL){
                 process_work_item(item);
+                printf("locking at %d: \n",__LINE__);
                 Pthread_mutex_lock(&(work_queue->mutex));
                 item = item->lsn_lnk.next;
+                printf("unlocking at %d: \n",__LINE__);
                 Pthread_mutex_unlock(&(work_queue->mutex));
             }
         }
         // Check first item on absolute_ts_list 
+                printf("locking at %d: \n",__LINE__);
         Pthread_mutex_lock(&(work_queue->mutex));
         item = LISTC_TOP(&(work_queue->absolute_ts_list));
+                printf("unlocking at %d: \n",__LINE__);
         Pthread_mutex_unlock(&(work_queue->mutex));
         if(item!=NULL){
             int now = comdb2_time_epochms();
