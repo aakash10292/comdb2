@@ -63,6 +63,9 @@ add_exe(updater updater.c testutil.c)
 
 target_link_libraries(stepper util mem dlmalloc util)
 target_link_libraries(test_threadpool util mem dlmalloc util)
+target_link_libraries(cdb2_open util)
+target_link_libraries(cdb2_close_early util)
+
 
 list(APPEND common-deps
   ${READLINE_LIBRARIES}

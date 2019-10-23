@@ -897,6 +897,7 @@ void seqnum_wait_cleanup(){
     struct seqnum_wait *item = NULL;
 
     //FREE THE WORK QUEUE
+    printf("Cleaning up the work queue\n");
     pthread_mutex_lock(&work_queue->mutex);
     LISTC_FOR_EACH(&work_queue->absolute_ts_list,item,absolute_ts_lnk)
     {
@@ -907,11 +908,17 @@ void seqnum_wait_cleanup(){
     {
         free(listc_rfl(&work_queue->lsn_list, item));
     }
-
+    //listc_free(&work_queue->absolute_ts_list);
+    //listc_free(&work_queue->lsn_list);
     pthread_mutex_unlock(&work_queue->mutex);
-
+    printf("Finished cleaning work queue\n");
+    printf("releasing work_queue\n");
+    free(work_queue);
+    printf("work queue release\n");
     // FREE THE MEM POOL
+    printf("releasing threadpool\n");
     pthread_mutex_lock(&seqnum_wait_queue_pool_lk);
     pool_free(seqnum_wait_queue_pool);
     pthread_mutex_unlock(&seqnum_wait_queue_pool_lk);
+    printf("cleanup done\n");
 }
