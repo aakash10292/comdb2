@@ -191,6 +191,11 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     swait->durable_lsns = bdb_state->attr->durable_lsns;
     swait->catchup_window = bdb_state->attr->catchup_window;
     swait->next_ts = comdb2_time_epochms();
+    swait->absolute_ts_lnk.prev = NULL;
+    swait->absolute_ts_lnk.next = NULL;
+
+    swait->lsn_lnk.next = NULL;
+    swait->lsn_lnk.prev = NULL;
 
     printf("locking at %d: \n",__LINE__);
     Pthread_mutex_lock(&(work_queue->mutex));
