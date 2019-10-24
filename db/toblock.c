@@ -2608,7 +2608,7 @@ static int toblock_main_int(struct javasp_trans_state *javasp_trans_handle,
      */
     blob_buffer_t blobs[MAXBLOBS];
     int delayed = 0;
-    int hascommitlock = 0;
+    iq->hascommitlock = 0;
 
     /* zero this out very high up or we can crash if we get to backout: without
      * having initialised this. */
@@ -4909,12 +4909,12 @@ static int toblock_main_int(struct javasp_trans_state *javasp_trans_handle,
     }
 
     Pthread_rwlock_rdlock(&commit_lock);
-    hascommitlock = 1;
+    iq->hascommitlock = 1;
     if (iq->arr || iq->selectv_arr) {
         // serializable read-set validation
         Pthread_rwlock_unlock(&commit_lock);
         Pthread_rwlock_wrlock(&commit_lock);
-        hascommitlock = 1;
+        iq->hascommitlock = 1;
 
         /* This is looking for a commit record - one dive is fine */
         while ((iq->arr &&
@@ -4925,7 +4925,7 @@ static int toblock_main_int(struct javasp_trans_state *javasp_trans_handle,
                                       &(iq->selectv_arr->file),
                                       &(iq->selectv_arr->offset), 1))) {
             Pthread_rwlock_unlock(&commit_lock);
-            hascommitlock = 0;
+            iq->hascommitlock = 0;
 
             if (iq->selectv_arr &&
                 bdb_osql_serial_check(thedb->bdb_env, iq->selectv_arr,
@@ -4957,7 +4957,7 @@ static int toblock_main_int(struct javasp_trans_state *javasp_trans_handle,
                 GOTOBACKOUT;
             } else {
                 Pthread_rwlock_wrlock(&commit_lock);
-                hascommitlock = 1;
+                iq->hascommitlock = 1;
             }
         }
 
@@ -5593,7 +5593,6 @@ add_blkseq:
                     iq->sc_logical_tran = NULL;
                     iq->should_wait_async = 1;
                 } else {
-                    iq->hascommitlock = hascommitlock;
                     irc = trans_commit_adaptive(iq, parent_trans, source_host);
                 }
                 if(iq->is_wait_async==0){
@@ -5607,9 +5606,9 @@ add_blkseq:
                                 "rc=%d\n", irc, rc);
                     }
 
-                    if (hascommitlock) {
+                    if (iq->hascommitlock) {
                         Pthread_rwlock_unlock(&commit_lock);
-                        hascommitlock = 0;
+                        iq->hascommitlock = 0;
                     }
                     if (gbl_dump_blkseq && iq->have_snap_info) {
                         char *bskey = alloca(iq->snap_info.keylen + 1);
@@ -5623,9 +5622,9 @@ add_blkseq:
                     }
                 }
             } else {
-                if (hascommitlock) {
+                if (iq->hascommitlock) {
                     Pthread_rwlock_unlock(&commit_lock);
-                    hascommitlock = 0;
+                    iq->hascommitlock = 0;
                 }
                 if (iq->tranddl) {
                     if (trans) {
@@ -5679,9 +5678,9 @@ add_blkseq:
             /* force a parent-deadlock for cdb2tcm */
             if ((tcm_testpoint(TCM_PARENT_DEADLOCK)) && (0 == (rand() % 20))) {
                 logmsg(LOGMSG_DEBUG, "tcm forcing parent retry in rowlocks\n");
-                if (hascommitlock) {
+                if (iq->hascommitlock) {
                     Pthread_rwlock_unlock(&commit_lock);
-                    hascommitlock = 0;
+                    iq->hascommitlock = 0;
                 }
                 if (iq->tranddl)
                     backout_and_abort_tranddl(iq, trans, 1);
@@ -5715,24 +5714,23 @@ add_blkseq:
                 }
                 /* TODO: private blkseq with rowlocks? */
                 iq->should_wait_async = 1;
-                iq->hascommitlock = hascommitlock;
                 rc = trans_commit_logical(
                     iq, trans, gbl_mynode, 0, 1, buf_fstblk,
                     p_buf_fstblk - buf_fstblk + sizeof(int), bskey, bskeylen);
 
                 if(iq->is_wait_async==0){
-                    if (hascommitlock) {
+                    if (iq->hascommitlock) {
                         Pthread_rwlock_unlock(&commit_lock);
-                        hascommitlock = 0;
+                        iq->hascommitlock = 0;
                     }
 
                     if(rc == BDBERR_NOT_DURABLE)
                         rc = ERR_NOT_DURABLE;
                 }
             } else {
-                if (hascommitlock) {
+                if (iq->hascommitlock) {
                     Pthread_rwlock_unlock(&commit_lock);
-                    hascommitlock = 0;
+                    iq->hascommitlock = 0;
                 }
                 if (iq->tranddl)
                     backout_and_abort_tranddl(iq, trans, 1);
@@ -5790,25 +5788,24 @@ add_blkseq:
 
         if (rowlocks) {
             if (rc) {
-                if (hascommitlock) {
+                if (iq->hascommitlock) {
                     Pthread_rwlock_unlock(&commit_lock);
-                    hascommitlock = 0;
+                    iq->hascommitlock = 0;
                 }
                 irc = trans_abort_logical(iq, trans, NULL, 0, NULL, 0);
                 if (irc == BDBERR_NOT_DURABLE)
                     irc = ERR_NOT_DURABLE;
             } else {
                 iq->should_wait_async = 1;
-                iq->hascommitlock = hascommitlock;
                 irc = trans_commit_logical(iq, trans, gbl_mynode, 0, 1, NULL, 0,
                                            NULL, 0);
                 if(iq->is_wait_async==0){
                     if (irc == BDBERR_NOT_DURABLE)
                         irc = ERR_NOT_DURABLE;
 
-                    if (hascommitlock) {
+                    if (iq->hascommitlock) {
                         Pthread_rwlock_unlock(&commit_lock);
-                        hascommitlock = 0;
+                        iq->hascommitlock = 0;
                     }
                 }
             }
@@ -5817,14 +5814,13 @@ add_blkseq:
             irc = 0;
             if (trans) {
                 iq->should_wait_async = 1;
-                iq->hascommitlock = hascommitlock;
                 irc = trans_commit_adaptive(iq, trans, source_host);
                 if (iq->is_wait_async==0 && irc == BDBERR_NOT_DURABLE)
                     irc = rc = ERR_NOT_DURABLE;
             }
-            if (iq->is_wait_async==0 && hascommitlock) {
+            if (iq->is_wait_async==0 && iq->hascommitlock) {
                 Pthread_rwlock_unlock(&commit_lock);
-                hascommitlock = 0;
+                iq->hascommitlock = 0;
             }
         }
 

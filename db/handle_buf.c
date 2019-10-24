@@ -492,10 +492,8 @@ static void *thd_req(void *vthd)
         thrman_origin(thr_self, getorigin(thd->iq));
         user_request_begin(REQUEST_TYPE_QTRAP, FLAG_REQUEST_TRACK_EVERYTHING);
         // Introduced two flags into iq :
-        // 1.) should_wait_async -> flag to determine if we should farmoff this request to be acked asynchronously
+        // 1.) should_wait_async -> flag to determine if we should farm away this request to be acked asynchronously
         // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
-        thd->iq->should_wait_async = 1; // By default we want it to be farmedoff... certain conditions (encountered later) might turn off this flag.
-        thd->iq->is_wait_async = 0; // Default state is that it hasn't been farmed off. 
         handle_ireq(thd->iq);
         if (debug_this_request(gbl_debug_until) ||
             (gbl_who > 0 && !gbl_sdebug)) {
@@ -829,6 +827,10 @@ static int init_ireq(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     }
 
     /* set up request */
+    iq->hascommitlock = 0;
+    iq->should_wait_async = 1; // by defualt we want all requests to be farmed off and acked asynchronously
+    iq->is_wait_async = 0;
+    iq->num_reqs = 0;
     const size_t len = sizeof(*iq) - offsetof(struct ireq, region3);
     bzero(&iq->region3, len);
 
@@ -934,7 +936,6 @@ static int init_ireq(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
         iq->transflags |= TRAN_VERIFY;
     if (iq->frommach == NULL)
         iq->frommach = intern(gbl_mynode);
-
     return 0;
 }
 

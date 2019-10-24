@@ -172,6 +172,7 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
         iq->is_wait_async=0;
         return 0; 
     }
+    iq->is_wait_async=1;
     swait->cur_state = INIT;
     swait->iq = iq;
     swait->bdb_state = bdb_state;
