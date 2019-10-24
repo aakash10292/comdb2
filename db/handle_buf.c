@@ -798,6 +798,10 @@ static int init_ireq_legacy(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     nowus = comdb2_time_epochus();
 
     /* set up request */
+    iq->hascommitlock = 0;
+    iq->should_wait_async = 1; // by defualt we want all requests to be farmed off and acked asynchronously
+    iq->is_wait_async = 0;
+    iq->num_reqs = 0;
     const size_t len = sizeof(*iq) - offsetof(struct ireq, region3);
     bzero(&iq->region3, len);
 
@@ -886,7 +890,6 @@ static int init_ireq_legacy(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
 
     if (iq->frommach == NULL)
         iq->frommach = intern(gbl_mynode);
-
     return 0;
 }
 
