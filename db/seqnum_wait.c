@@ -125,6 +125,7 @@ void add_to_absolute_ts_list(struct seqnum_wait *item, int new_ts){
     struct seqnum_wait *add_before_ts = NULL;
     item->next_ts = new_ts;
     // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again
+    logmsg(LOGMSG_DEBUG, "Adding item %d:%d to absolute_ts_list with next time stamp %d\n", item->seqnum->lsn.file, item->seqnum->lsn.offset, new_ts);
     LISTC_FOR_EACH(&work_queue->absolute_ts_list,add_before_ts,absolute_ts_lnk)
     {
         if(add_before_ts!=NULL && item!=add_before_ts && ts_compare(new_ts, add_before_ts->next_ts) <= 0){
@@ -823,29 +824,37 @@ void *queue_processor(void *arg){
     struct seqnum_wait *item = NULL;
     struct timespec waittime;
     int wait_rc = 0;
-    printf("Starting seqnum_wait worker thread");
+    int now = 0;
+    logmsg(LOGMSG_DEBUG,"Starting seqnum_wait worker thread\n");
     while(1){
                 printf("locking at %d: \n",__LINE__);
         Pthread_mutex_lock(&(work_queue->mutex));
         while(listc_size(&(work_queue->lsn_list))==0){
-                printf("unlocking at %d: \n",__LINE__);
+            printf("unlocking at %d: \n",__LINE__);
+            logmsg(LOGMSG_DEBUG,"LSN list is empty.... Waiting for work item\n");
             Pthread_cond_wait(&(work_queue->cond),&(work_queue->mutex));
-                printf("locking at %d: \n",__LINE__);
+            printf("locking at %d: \n",__LINE__);
         }
                 printf("unlocking at %d: \n",__LINE__);
         Pthread_mutex_unlock(&(work_queue->mutex));
+        logmsg(LOGMSG_DEBUG,"Finally! got a work item\n");
+
         // if timed_wait below resulted in a timeout, we need to go over absolute_ts_list
         if(wait_rc == ETIMEDOUT){
+            logmsg(LOGMSG_DEBUG,"Timed out on conditional wait.. Going over absolute ts list\n");
                 printf("locking at %d: \n",__LINE__);
             Pthread_mutex_lock(&(work_queue->mutex));
             item = LISTC_TOP(&(work_queue->absolute_ts_list));
                 printf("unlocking at %d: \n",__LINE__);
             Pthread_mutex_unlock(&(work_queue->mutex));
-            while(item!=NULL && (item->next_ts <= comdb2_time_epochms())){
+            now = comdb2_time_epochms();
+            while(item!=NULL && (item->next_ts <= now)){
                 if (item->cur_state == FREE){
+                    logmsg(LOGMSG_DEBUG, "Done processing work item: %d:%d... Freeing it\n",item->seqnum->lsn.file, item->seqnum->lsn.offset);
                     free_work_item(item);
                 }
                 else{
+                    logmsg(LOGMSG_DEBUG, "Processing work item: %d:%d, in state: %d\n",item->seqnum->lsn.file, item->seqnum->lsn.offset,item->cur_state);
                     process_work_item(item);
                 }
                 printf("locking at %d: \n",__LINE__);
@@ -858,13 +867,21 @@ void *queue_processor(void *arg){
         else{
             // wait_rc == 0, which means either this is the first run of infinite while loop , or..
             // the timed_wait below was signalled...i.e... we got new seqnum -> we iterate over lsn_list upto max_lsn_seen 
+            logmsg(LOGMSG_DEBUG, "Either got new seqnum or going through lsn list for the first time\n");
                 printf("locking at %d: \n",__LINE__);
             Pthread_mutex_lock(&(work_queue->mutex));
             item = LISTC_TOP(&(work_queue->lsn_list));
                 printf("unlocking at %d: \n",__LINE__);
             Pthread_mutex_unlock(&(work_queue->mutex));
             while(item!=NULL){
-                process_work_item(item);
+                if (item->cur_state == FREE){
+                    logmsg(LOGMSG_DEBUG, "Done processing work item: %d:%d... Freeing it\n",item->seqnum->lsn.file, item->seqnum->lsn.offset);
+                    free_work_item(item);
+                }
+                else{
+                    logmsg(LOGMSG_DEBUG, "Processing work item: %d:%d, in state: %d\n",item->seqnum->lsn.file, item->seqnum->lsn.offset,item->cur_state);
+                    process_work_item(item);
+                }
                 printf("locking at %d: \n",__LINE__);
                 Pthread_mutex_lock(&(work_queue->mutex));
                 item = item->lsn_lnk.next;
@@ -883,9 +900,12 @@ void *queue_processor(void *arg){
             if(now <  item->next_ts){
                 // we are early, wait till the earliest time that a node has to be checked
                 // Or, till we get signalled by got_new_seqnum_from_node
-                setup_waittime(&waittime, now-item->next_ts);
+                setup_waittime(&waittime, item->next_ts-now);
+                logmsg(LOGMSG_DEBUG, "Current time :%d before earliest time a work item has to be checked:%d ... going into timedcondwait\n",now,item->next_ts);
+                Pthread_mutex_lock(&(item->bdb_state->seqnum_info->lock));
                 wait_rc = pthread_cond_timedwait(&(item->bdb_state->seqnum_info->cond),
                                             &(item->bdb_state->seqnum_info->lock), &waittime); 
+                Pthread_mutex_unlock(&(item->bdb_state->seqnum_info->lock));
             }
             else{
                 // We are at(or have crossed) the smallest next_ts in absolute_ts_list

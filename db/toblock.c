@@ -5906,9 +5906,9 @@ add_blkseq:
 
     fromline = __LINE__;
 cleanup:
-    logmsg(LOGMSG_DEBUG, "%s cleanup did_replay:%d fromline:%d\n", __func__,
-           did_replay, fromline);
     if(iq->is_wait_async==0){
+        logmsg(LOGMSG_DEBUG, "%s cleanup did_replay:%d fromline:%d\n", __func__,
+               did_replay, fromline);
         bdb_checklock(thedb->bdb_env);
 
         iq->timings.req_finished = osql_log_time();
