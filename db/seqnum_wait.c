@@ -77,7 +77,7 @@ int seqnum_wait_gbl_mem_init(){
     if(work_queue == NULL){
         return -1;
     }
-    work_queue->next_commit_timestamp = INT_MIN;
+    work_queue->next_commit_timestamp = 0;
     listc_init(&work_queue->lsn_list, offsetof(struct seqnum_wait, lsn_lnk));
     listc_init(&work_queue->absolute_ts_list, offsetof(struct seqnum_wait, absolute_ts_lnk));
     pthread_mutex_init(&(work_queue->mutex), NULL);
@@ -106,7 +106,8 @@ int ts_compare(int ts1, int ts2){
 // Assumes that we already have lock on work_queue->mutex
 void add_to_lsn_list(struct seqnum_wait *item){
     struct seqnum_wait *add_before_lsn = NULL;
-    LISTC_FOR_EACH(&work_queue->lsn_list,add_before_lsn,lsn_lnk)
+    struct seqnum_wait *temp = NULL;
+    LISTC_FOR_EACH_SAFE(&work_queue->lsn_list,add_before_lsn,temp,lsn_lnk)
     {
         if(log_compare(&(item->seqnum->lsn), &(add_before_lsn->seqnum->lsn)) <= 0){
             listc_add_before(&(work_queue->lsn_list),item,add_before_lsn);
@@ -121,47 +122,21 @@ void add_to_lsn_list(struct seqnum_wait *item){
 }
 
 // Assumes that we already have lock on work_queue->mutex
-void add_to_absolute_ts_list(struct seqnum_wait *item, int new_ts){
+void add_to_absolute_ts_list(struct seqnum_wait *item){
     struct seqnum_wait *add_before_ts = NULL;
-    item->next_ts = new_ts;
-    // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again
-    logmsg(LOGMSG_DEBUG, "Adding item %d:%d to absolute_ts_list with next time stamp %d\n", item->seqnum->lsn.file, item->seqnum->lsn.offset, new_ts);
-    LISTC_FOR_EACH(&work_queue->absolute_ts_list,add_before_ts,absolute_ts_lnk)
+    struct seqnum_wait *temp = NULL;
+    logmsg(LOGMSG_DEBUG, "Adding item %d:%d to absolute_ts_list with next time stamp %d\n", item->seqnum->lsn.file, item->seqnum->lsn.offset, item->next_ts);
+    LISTC_FOR_EACH_SAFE(&work_queue->absolute_ts_list,add_before_ts,temp,absolute_ts_lnk)
     {
-        if(add_before_ts!=NULL && item!=add_before_ts && ts_compare(new_ts, add_before_ts->next_ts) <= 0){
-            if(item->absolute_ts_lnk.next == add_before_ts){
-                // item is already in the right place... nothing to do.
-                return;
-            }
-            // Make sure next and previous nodes of item are made to point to the correct nodes in the list
-            if(item->absolute_ts_lnk.prev!=NULL){
-                item->absolute_ts_lnk.prev->absolute_ts_lnk.next = item->absolute_ts_lnk.next;
-            }
-            if(item->absolute_ts_lnk.next!=NULL) {
-                item->absolute_ts_lnk.next->absolute_ts_lnk.prev = item->absolute_ts_lnk.prev;
-            }
-            if(new_ts == add_before_ts->next_ts){
-                // add item after add_before ( we want to follow FCFS for same next_ts)
-                listc_add_after(&work_queue->absolute_ts_list,item,add_before_ts);
-            }
-            else{
-                // add item before add_before
-                listc_add_before(&work_queue->absolute_ts_list,item,add_before_ts);
-            }
-            return;
+        if(ts_compare(item->next_ts, add_before_ts->next_ts) <= 0){
+           listc_add_before(&(work_queue->absolute_ts_list),item,add_before_ts);
+           break;
         }
     }
 
     if(add_before_ts == NULL){
-        // Make sure next and previous nodes of item are made to point to the correct nodes in the list
-        if(item->absolute_ts_lnk.prev!=NULL){
-            item->absolute_ts_lnk.prev->absolute_ts_lnk.next = item->absolute_ts_lnk.next;
-        }
-        if(item->absolute_ts_lnk.next!=NULL) {
-            item->absolute_ts_lnk.next->absolute_ts_lnk.prev = item->absolute_ts_lnk.prev;
-        }
         // updated next timestamp for this item is the highest yet... Adding to end of absolute_ts_list
-        listc_abl(&work_queue->absolute_ts_list, item);
+        listc_abl(&(work_queue->absolute_ts_list), item);
     }
 }
 
@@ -205,7 +180,7 @@ int add_to_seqnum_wait_queue(struct ireq *iq,bdb_state_type *bdb_state, seqnum_t
     add_to_lsn_list(swait);
     // Add to absolute_ts_list in increasing order of next_ts
     printf("Adding to absolute timestamp list\n");
-    add_to_absolute_ts_list(swait, swait->next_ts);
+    add_to_absolute_ts_list(swait);
     work_queue->size += 1;
     Pthread_cond_signal(&(work_queue->cond));
     printf("unlocking\nt %d: \n", __LINE__);
@@ -227,9 +202,9 @@ void remove_from_seqnum_wait_queue(struct seqnum_wait *item){
 int free_work_item(struct seqnum_wait *item){
     int rc = 0;
     // First remove item from the two lists;
-    Pthread_mutex_lock(&work_queue->mutex);
+    Pthread_mutex_lock(&(work_queue->mutex));
     remove_from_seqnum_wait_queue(item);
-    Pthread_mutex_unlock(&work_queue->mutex);
+    Pthread_mutex_unlock(&(work_queue->mutex));
 
     // Return memory to mempool
     rc = deallocate_seqnum_wait(item);
@@ -277,6 +252,16 @@ void process_work_item(struct seqnum_wait *item){
             }
             logmsg(LOGMSG_DEBUG, "%s waiting for %s\n", __func__, lsn_to_str(item->str, &(item->seqnum->lsn)));
             item->start_time = comdb2_time_epochms();
+            if(item->durable_lsns){
+                item->total_connected = net_get_sanctioned_replicants(item->bdb_state->repinfo->netinfo, REPMAX, item->connlist);
+            } else {
+                item->total_connected = net_get_all_commissioned_nodes(item->bdb_state->repinfo->netinfo, item->connlist); 
+            }
+            if (item->total_connected == 0){
+                /* nobody is there to wait for! */
+                item->cur_state = DONE_WAIT;
+                goto done_wait_label;
+            }
 
             if (item->track_once && item->bdb_state->attr->track_replication_times) {
                 item->track_once = 0;
@@ -341,7 +326,7 @@ void process_work_item(struct seqnum_wait *item){
                 if (item->numnodes == 0) {
                     goto done_wait_label;
                 }
-                int new_ts = 0;
+                
                 item->cur_state = FIRST_ACK;
                 for (int i = 0; i < item->numnodes; i++) {
                     if (item->bdb_state->rep_trace)
@@ -371,10 +356,11 @@ void process_work_item(struct seqnum_wait *item){
                 }
                 // If we get here, then none of the replicants have caught up yet, 
                 // Let's wait for one second and check again.
-                new_ts = comdb2_time_epochms() + 1000;
                 printf("locking at %d: \n",__LINE__);
                 Pthread_mutex_lock(&(work_queue->mutex));
-                add_to_absolute_ts_list(item, new_ts);
+                item->next_ts = comdb2_time_epochms() + 1000;
+                listc_rfl(&work_queue->absolute_ts_list, item);
+                add_to_absolute_ts_list(item);
                 printf("unlocking at %d: \n",__LINE__);
                 Pthread_mutex_unlock(&(work_queue->mutex));
                 // We break out of the switch as we are done processing this item (for now)
@@ -455,7 +441,9 @@ void process_work_item(struct seqnum_wait *item){
                     // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again 
                     printf("locking at %d: \n",__LINE__);
                     Pthread_mutex_lock(&(work_queue->mutex));
-                    add_to_absolute_ts_list(item, comdb2_time_epochms() + item->waitms);
+                    item->next_ts = comdb2_time_epochms() + item->waitms; 
+                    listc_rfl(&work_queue->absolute_ts_list, item);
+                    add_to_absolute_ts_list(item);
                     printf("unlocking at %d: \n",__LINE__);
                     Pthread_mutex_unlock(&(work_queue->mutex));
                     // We break out and handle next iten in the work queue
@@ -627,7 +615,9 @@ void process_work_item(struct seqnum_wait *item){
             }
             else{
                 item->cur_state = COMMIT;
-                add_to_absolute_ts_list(item, work_queue->next_commit_timestamp);
+                item->next_ts = work_queue->next_commit_timestamp;
+                listc_rfl(&work_queue->absolute_ts_list, item);
+                add_to_absolute_ts_list(item);
             printf("unlocking at %d: \n",__LINE__);
                 Pthread_mutex_unlock(&(work_queue->mutex));
                 break;
@@ -905,7 +895,8 @@ void *queue_processor(void *arg){
                 Pthread_mutex_lock(&(item->bdb_state->seqnum_info->lock));
                 wait_rc = pthread_cond_timedwait(&(item->bdb_state->seqnum_info->cond),
                                             &(item->bdb_state->seqnum_info->lock), &waittime); 
-                Pthread_mutex_unlock(&(item->bdb_state->seqnum_info->lock));
+                if(wait_rc != ETIMEDOUT)
+                    Pthread_mutex_unlock(&(item->bdb_state->seqnum_info->lock));
             }
             else{
                 // We are at(or have crossed) the smallest next_ts in absolute_ts_list
