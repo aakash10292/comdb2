@@ -114,7 +114,8 @@ int bdb_wait_for_seqnum_from_node_nowait_int(bdb_state_type *bdb_state,
 
 static void bdb_zap_lsn_waitlist(bdb_state_type *bdb_state, const char *host);
 
-static int last_slow_node_check_time = 0;
+//making below non-static to be used seqnum_wait.c
+int last_slow_node_check_time = 0;
 // Made the below lock non-static, in order to use in seqnum_wait.c
 pthread_mutex_t slow_node_check_lk = PTHREAD_MUTEX_INITIALIZER;
 

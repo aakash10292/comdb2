@@ -1284,6 +1284,7 @@ struct ireq {
     int luxref;
     uint8_t osql_rowlocks_enable;
     uint8_t osql_genid48_enable;
+    int should_wait_async; // adding this as part of asynchronous acking of commits
 
     /************/
     /* REGION 2 */
@@ -1422,7 +1423,6 @@ struct ireq {
     int written_row_count;
     /* REVIEW COMMENTS AT BEGINING OF STRUCT BEFORE ADDING NEW VARIABLES */
     int num_reqs;
-    int should_wait_async;
     int is_wait_async;
     int hascommitlock;
 };

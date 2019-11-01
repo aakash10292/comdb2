@@ -74,8 +74,6 @@ struct seqnum_wait{
     int  now, cntbytes;
     const char *nodelist[REPMAX];
     const char *connlist[REPMAX];
-    int durable_lsns;
-    int catchup_window;
     int do_slow_node_check;
     DB_LSN *masterlsn;
     int numnodes;
@@ -87,7 +85,6 @@ struct seqnum_wait{
     int outrc;
     int num_incoh;
     int next_ts;              // timestamp in the future when this item has to be "worked" on
-    int previous_ts;          // timestamp of the last time this item was "worked" on  
     int reset_wait_time; 
     int remaining_wait_time;
     struct timespec wait_time;
@@ -103,12 +100,12 @@ struct seqnum_wait{
     int lock_desired;
     struct ireq *iq;
     bdb_state_type *bdb_state;
+    struct dbenv *dbenv;
     seqnum_type *seqnum;
     int *timeoutms;
     uint64_t txnsize;
     int newcoh;
     int got_ack_from_atleast_one_node;
-    int last_slow_node_check_time;
     LINKC_T(struct seqnum_wait) lsn_lnk;
     LINKC_T(struct seqnum_wait) absolute_ts_lnk;
 };
@@ -122,7 +119,7 @@ typedef struct{
     uint64_t next_commit_timestamp;
 }seqnum_wait_queue;
 // Add work item to seqnum_wait_queue.
-int add_to_seqnum_wait_queue(struct ireq *iq, bdb_state_type *bdb_state, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh);
+int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh);
 int seqnum_wait_gbl_mem_init();
 void seqnum_wait_cleanup();
 

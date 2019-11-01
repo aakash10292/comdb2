@@ -494,7 +494,14 @@ static void *thd_req(void *vthd)
         // Introduced two flags into iq :
         // 1.) should_wait_async -> flag to determine if we should farm away this request to be acked asynchronously
         // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
+        logmsg(LOGMSG_DEBUG, "processing new request\n");
         handle_ireq(thd->iq);
+        if(thd->iq->is_wait_async){
+            logmsg(LOGMSG_DEBUG, "request farmed off\n");
+        }
+        else{
+            logmsg(LOGMSG_DEBUG, "request processed inline\n");
+        }
         if (debug_this_request(gbl_debug_until) ||
             (gbl_who > 0 && !gbl_sdebug)) {
             struct per_request_stats *st;
@@ -509,10 +516,10 @@ static void *thd_req(void *vthd)
         thrman_origin(thr_self, NULL);
         thrman_where(thr_self, "idle");
         thd->iq->where = "done executing";
-        if(thd->iq->is_wait_async == 0){
+        //if(thd->iq->is_wait_async == 0){
             // before acquiring next request, yield
             comdb2bma_yield_all();
-        }
+        //}
         /*NEXT REQUEST*/
         LOCK(&lock)
         {
@@ -593,6 +600,7 @@ static void *thd_req(void *vthd)
                         listc_rfl(&rq_reqs, nxtrq);
                     }
                     /* release the memory block of the link */
+                    logmsg(LOGMSG_DEBUG, "%s:%d releasing iq\n",__func__,__LINE__);
                     pool_relablk(pq_reqs, nxtrq);
                 }
                 if (newrqwriter && thd->iq != 0) {

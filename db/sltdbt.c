@@ -287,7 +287,7 @@ int handle_ireq(struct ireq *iq)
             rc = opcode->opcode_handler(iq);
 
             /* Record the tablename (aka table) for this op */
-            if (iq->usedb && iq->usedb->tablename) {
+            if (iq->is_wait_async==0 && iq->usedb && iq->usedb->tablename) {
                 reqlog_logl(iq->reqlogger, REQL_INFO, iq->usedb->tablename);
             }
         }
@@ -429,21 +429,22 @@ int handle_ireq(struct ireq *iq)
         }
         reqlog_end_request(iq->reqlogger, rc, __func__, __LINE__);
         release_node_stats(NULL, NULL, iq->frommach);
-        if (gbl_print_deadlock_cycles)
-            osql_snap_info = NULL;
+            if (gbl_print_deadlock_cycles)
+                osql_snap_info = NULL;
 
-        if (iq->sorese.type) {
-            if (iq->p_buf_out_start) {
-                free(iq->p_buf_out_start);
-                iq->p_buf_out_end = iq->p_buf_out_start = iq->p_buf_out = NULL;
-                iq->p_buf_in_end = iq->p_buf_in = NULL;
+            if (iq->sorese.type) {
+                if (iq->p_buf_out_start) {
+                    free(iq->p_buf_out_start);
+                    iq->p_buf_out_end = iq->p_buf_out_start = iq->p_buf_out = NULL;
+                    iq->p_buf_in_end = iq->p_buf_in = NULL;
+                }
             }
+
+            /* Make sure we do not leak locks */
+
+            bdb_checklock(thedb->bdb_env);
         }
-
-        /* Make sure we do not leak locks */
-
-        bdb_checklock(thedb->bdb_env);
-    }
+   
 
     return rc;
 }
