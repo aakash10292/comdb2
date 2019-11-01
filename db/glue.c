@@ -214,7 +214,8 @@ static void *get_bdb_handle_ireq(struct ireq *iq, int auxdb)
     return bdb_handle;
 }
 
-static void *bdb_handle_from_ireq(const struct ireq *iq)
+// making below function non-static to be used in seqnum_wait.c
+void *bdb_handle_from_ireq(const struct ireq *iq)
 {
     struct dbtable *db = iq->usedb;
     if (db)
@@ -228,7 +229,8 @@ static void *bdb_handle_from_ireq(const struct ireq *iq)
     }
 }
 
-static struct dbenv *dbenv_from_ireq(const struct ireq *iq)
+// making below function non static , to be used in seqnum_wait.c
+struct dbenv *dbenv_from_ireq(const struct ireq *iq)
 {
     struct dbtable *db = iq->usedb;
     if (db)
@@ -650,14 +652,14 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
         if(gbl_seqnum_wait_init_success && iq->should_wait_async){
             if (adaptive){
                 iq->timeoutms = -1;
-                enqueued = add_to_seqnum_wait_queue(iq, bdb_handle, (seqnum_type *)ss, &iq->timeoutms, iq->txnsize,1); 
+                enqueued = add_to_seqnum_wait_queue(iq, (seqnum_type *)ss, &iq->timeoutms, iq->txnsize,1); 
             }
             else if (timeoutms == -1){
                 int timeoutms = ((bdb_state_type *)bdb_handle)->attr->reptimeout * MILLISEC;
-                enqueued = add_to_seqnum_wait_queue(iq, bdb_handle, (seqnum_type *)ss, &timeoutms, 0,0); 
+                enqueued = add_to_seqnum_wait_queue(iq, (seqnum_type *)ss, &timeoutms, 0,0); 
             }
             else{
-                enqueued = add_to_seqnum_wait_queue(iq, bdb_handle, (seqnum_type *)ss, &timeoutms, 0,0); 
+                enqueued = add_to_seqnum_wait_queue(iq, (seqnum_type *)ss, &timeoutms, 0,0); 
             }
         }
         

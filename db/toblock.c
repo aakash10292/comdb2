@@ -5589,8 +5589,8 @@ add_blkseq:
                                                    gbl_mynode, 0, 1, NULL, 0,
                                                    NULL, 0);
                     iq->sc_logical_tran = NULL;
-                    iq->should_wait_async = 1;
                 } else {
+                    iq->should_wait_async = 1;
                     irc = trans_commit_adaptive(iq, parent_trans, source_host);
                 }
                 if(iq->is_wait_async==0){
@@ -5680,6 +5680,7 @@ add_blkseq:
                     Pthread_rwlock_unlock(&commit_lock);
                     iq->hascommitlock = 0;
                 }
+                iq->should_wait_async = 0;
                 if (iq->tranddl)
                     backout_and_abort_tranddl(iq, trans, 1);
                 trans_abort_logical(iq, trans, NULL, 0, NULL, 0);
@@ -5704,7 +5705,6 @@ add_blkseq:
                         comdb2_die(0);
                     }
                     iq->sc_tran = NULL;
-                    iq->should_wait_async = 1;
                 }
                 if (iq->sc_locked) {
                     unlock_schema_lk();
@@ -5730,8 +5730,10 @@ add_blkseq:
                     Pthread_rwlock_unlock(&commit_lock);
                     iq->hascommitlock = 0;
                 }
-                if (iq->tranddl)
+                if (iq->tranddl){
+                    iq->should_wait_async = 0;
                     backout_and_abort_tranddl(iq, trans, 1);
+                }
                 rc = trans_abort_logical(
                     iq, trans, buf_fstblk,
                     p_buf_fstblk - buf_fstblk + sizeof(int), bskey, bskeylen);
@@ -5790,6 +5792,7 @@ add_blkseq:
                     Pthread_rwlock_unlock(&commit_lock);
                     iq->hascommitlock = 0;
                 }
+                iq->should_wait_async = 0;
                 irc = trans_abort_logical(iq, trans, NULL, 0, NULL, 0);
                 if (irc == BDBERR_NOT_DURABLE)
                     irc = ERR_NOT_DURABLE;
@@ -5822,7 +5825,7 @@ add_blkseq:
             }
         }
 
-        if (iq->is_wait_async==0 && rc != 0) {
+        if (rc != 0) {
             if (iq->debug)
                 reqprintf(iq, "%p:PARENT TRANSACTION COMMIT FAILED RC %d",
                           parent_trans, rc);
@@ -5926,12 +5929,12 @@ cleanup:
              thread 2:  insert -> got dupe? -> select -> NOT FOUND?!
           thread 2 can race with thread 1, this lets the abort wait
         */
+    }
         if (backed_out){
             iq->should_wait_async = 0;
             trans_wait_for_last_seqnum(iq, source_host);
             iq->should_wait_async = 1;
         }
-    }
 
     return outrc;
 }
