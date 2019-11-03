@@ -389,8 +389,8 @@ void process_work_item(struct seqnum_wait *item){
                    else{
                        item->outrc = -1;
                    }
-                   item->cur_state = DONE_WAIT;
-                   goto done_wait_label;
+                   item->cur_state = COMMIT;
+                   goto commit_label;
                }
                // we timed out i.e exceeded bdb->attr->rep_timeout_maxms
                logmsg(LOGMSG_WARN, "timed out waiting for initial replication of <%s>\n",
@@ -402,6 +402,18 @@ void process_work_item(struct seqnum_wait *item){
                item->cur_state = GOT_FIRST_ACK;
            } 
         case GOT_FIRST_ACK: got_first_ack_label:
+           // First check if someone else wants bdb_lock a.k.a master swing
+           if(bdb_lock_desired(item->bdb_state)){
+               logmsg(LOGMSG_ERROR,"%s line %d early exit because lock-is-desired\n",__func__,__LINE__);
+               if(item->bdb_state->attr->durable_lsns){
+                   item->outrc = BDBERR_NOT_DURABLE;
+               }
+               else{
+                   item->outrc = -1;
+               }
+               item->cur_state = COMMIT;
+               goto commit_label;
+           }
            // Either we've received first ack or we've timed out
             item->numfailed = 0;
             int acked = 0;
@@ -423,8 +435,8 @@ void process_work_item(struct seqnum_wait *item){
                     else{
                        item->outrc = -1;
                     }
-                    item->cur_state = DONE_WAIT;
-                    goto done_wait_label;
+                    item->cur_state = COMMIT;
+                    goto commit_label;
                 }
                 if (rc == -999){
                     logmsg(LOGMSG_WARN, "node %s hasn't caught up yet, base node "
@@ -483,8 +495,8 @@ void process_work_item(struct seqnum_wait *item){
                             else{
                                item->outrc = -1;
                             }
-                            item->cur_state = DONE_WAIT;
-                            goto done_wait_label;
+                            item->cur_state = COMMIT;
+                            goto commit_label;
                         }
                         if (rc == -999){
                             logmsg(LOGMSG_WARN, "node %s hasn't caught up yet, base node "
@@ -634,6 +646,10 @@ void process_work_item(struct seqnum_wait *item){
                 break;
             }
         case COMMIT: commit_label:
+            if(item->outrc == BDBERR_NOT_DURABLE){
+                item->outrc = ERR_NOT_DURABLE;
+                logmsg(LOGMSG_DEBUG, "We\'ve committed to the btree, but not replicated: asking client to retry.. \n");
+            }
             if(item->iq->hascommitlock){
                 Pthread_rwlock_unlock(&commit_lock);
                 item->iq->hascommitlock = 0;
@@ -654,10 +670,28 @@ void process_work_item(struct seqnum_wait *item){
             item->iq->timings.req_finished = osql_log_time();
             item->iq->timings.retries++;
             osql_blkseq_unregister(item->iq);
+            if (item->outrc != 0 && item->outrc != ERR_BLOCK_FAILED && item->outrc != ERR_READONLY &&
+                item->outrc != ERR_SQL_PREP && item->outrc != ERR_NO_AUXDB && item->outrc != ERR_INCOHERENT &&
+                item->outrc != ERR_SC_COMMIT && item->outrc != ERR_CONSTR && item->outrc != ERR_TRAN_FAILED &&
+                item->outrc != ERR_CONVERT_DTA && item->outrc != ERR_NULL_CONSTRAINT &&
+                item->outrc != ERR_CONVERT_IX && item->outrc != ERR_BADREQ && item->outrc != ERR_RMTDB_NESTED &&
+                item->outrc != ERR_NESTED && item->outrc != ERR_NOMASTER && item->outrc != ERR_READONLY &&
+                item->outrc != ERR_VERIFY && item->outrc != RC_TRAN_CLIENT_RETRY &&
+                item->outrc != RC_INTERNAL_FORWARD && item->outrc != RC_INTERNAL_RETRY &&
+                item->outrc != ERR_TRAN_TOO_BIG && /* THIS IS SENT BY BLOCKSQL WHEN TOOBIG */
+                item->outrc != 999 && item->outrc != ERR_ACCESS && item->outrc != ERR_UNCOMMITABLE_TXN &&
+                (item->outrc != ERR_NOT_DURABLE || !item->iq->sorese.type)) {
+                /* XXX CLIENT_RETRY DOESNT ACTUALLY CAUSE A RETRY USUALLY, just
+                   a bad rc to the client! */
+                /*rc = RC_TRAN_CLIENT_RETRY;*/
+
+                item->outrc = ERR_NOMASTER;
+            }
 
             //javasp_trans_end(item->iq->jsph);
             //block_state_free(item->iq->blkstate);
-            reqlog_logl(item->iq->reqlogger, REQL_INFO, item->iq->usedb->tablename);
+            if(item->iq->usedb && item->iq->usedb->tablename)
+                reqlog_logl(item->iq->reqlogger, REQL_INFO, item->iq->usedb->tablename);
 
             // Send back the response -> code reference db/sltdbt.c line 297
             if(item->iq->debug){
@@ -761,7 +795,7 @@ void process_work_item(struct seqnum_wait *item){
                 osql_bplog_reqlog_queries(item->iq);
             }
             reqlog_end_request(item->iq->reqlogger, item->outrc, __func__, __LINE__);
-            //release_node_stats(NULL, NULL, item->iq->frommach);
+            release_node_stats(NULL, NULL, item->iq->frommach);
             if (gbl_print_deadlock_cycles)
                 osql_snap_info = NULL;
 
