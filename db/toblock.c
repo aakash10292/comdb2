@@ -5568,7 +5568,8 @@ add_blkseq:
                     iq->should_wait_async = 0;
                     if (backed_out) {
                         assert(trans == NULL);
-                        bdb_ltran_put_schema_lock(iq->sc_logical_tran);
+                        if (iq->sc_logical_tran)
+                            bdb_ltran_put_schema_lock(iq->sc_logical_tran);
                     } else {
                         assert(iq->sc_tran);
                         assert(trans != NULL);
@@ -5587,9 +5588,10 @@ add_blkseq:
                         unlock_schema_lk();
                         iq->sc_locked = 0;
                     }
-                    irc = trans_commit_logical(iq, iq->sc_logical_tran,
-                                               gbl_mynode, 0, 1, NULL, 0, NULL,
-                                               0);
+                    if (iq->sc_logical_tran)
+                        irc = trans_commit_logical(iq, iq->sc_logical_tran,
+                                                   gbl_mynode, 0, 1, NULL, 0,
+                                                   NULL, 0);
                     iq->sc_logical_tran = NULL;
                 } else {
                     iq->should_wait_async = 1;
