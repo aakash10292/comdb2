@@ -850,6 +850,7 @@ int trans_abort_logical(struct ireq *iq, void *trans, void *blkseq, int blklen,
     /* Single phy-txn logical aborts will set ss to 0: check before waiting */
     u_int32_t *file = (u_int32_t *)&ss;
     if (*file != 0) {
+        iq->should_wait_async = 0;
         trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, gbl_mynode,
                                   -1 /* timeoutms */, 1 /* adaptive */, &ss);
     }
