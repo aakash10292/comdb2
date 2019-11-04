@@ -183,8 +183,7 @@ int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutm
     swait->iq = iq;
     swait->bdb_state = bdb_handle_from_ireq(iq);
     swait->dbenv = dbenv_from_ireq(iq);
-    swait->seqnum = (seqnum_type *)malloc(sizeof(struct seqnum_t));
-    memcpy(swait->seqnum,seqnum,sizeof(struct seqnum_t));
+    swait->seqnum = seqnum;
     swait->timeoutms = timeoutms;
     swait->txnsize = txnsize;
     swait->newcoh = newcoh;

@@ -5625,12 +5625,14 @@ add_blkseq:
                     iq->hascommitlock = 0;
                 }
                 if (iq->tranddl) {
+                    iq->should_wait_async = 0;
                     if (trans) {
                         trans_abort(iq, trans);
                         trans = NULL;
                     }
                     backout_and_abort_tranddl(iq, parent_trans, 0);
                 } else {
+                    iq->should_wait_async = 0;
                     trans_abort(iq, parent_trans);
                 }
                 parent_trans = NULL;
@@ -5734,6 +5736,7 @@ add_blkseq:
                     iq->should_wait_async = 0;
                     backout_and_abort_tranddl(iq, trans, 1);
                 }
+                iq->should_wait_async = 0;
                 rc = trans_abort_logical(
                     iq, trans, buf_fstblk,
                     p_buf_fstblk - buf_fstblk + sizeof(int), bskey, bskeylen);
