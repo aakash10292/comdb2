@@ -4990,7 +4990,6 @@ static int toblock_main_int(struct javasp_trans_state *javasp_trans_handle,
         /*fprintf(stderr, "commit child\n");*/
         iq->should_wait_async = 0;
         irc = trans_commit(iq, trans, source_host);
-        iq->should_wait_async = 1;
         if (irc != 0) { /* this shouldnt happen */
             logmsg(LOGMSG_FATAL, "%s:%d TRANS_COMMIT FAILED RC %d", __func__,
                    __LINE__, irc);
