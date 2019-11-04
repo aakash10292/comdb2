@@ -371,6 +371,7 @@ static void delay_sc_if_needed(struct convert_record_data *data,
 
     /* wait for replication on what we just committed */
     if ((data->nrecs % data->num_records_per_trans) == 0) {
+        data->iq.should_wait_async = 0;
         if ((rc = trans_wait_for_seqnum(&data->iq, gbl_mynode, ss)) != 0) {
             sc_errf(data->s, "delay_sc_if_needed: error waiting for "
                              "replication rcode %d\n",
@@ -1716,6 +1717,7 @@ static int upgrade_records(struct convert_record_data *data)
 
         // txn contains enough records, wait for replicants
         if ((data->nrecs % data->num_records_per_trans) == 0) {
+            data->iq.should_wait_async = 0;
             if ((rc = trans_wait_for_seqnum(&data->iq, gbl_mynode, &ss)) != 0) {
                 sc_errf(data->s, "%s: error waiting for "
                                  "replication rcode %d\n",

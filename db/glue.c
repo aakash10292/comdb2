@@ -762,15 +762,16 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
                             int blkkeylen)
 {
     int rc;
-    db_seqnum_type ss;
+    db_seqnum_type *ss;
     char *cnonce = NULL;
     int cn_len;
     void *bdb_handle = bdb_handle_from_ireq(iq);
     struct dbenv *dbenv = dbenv_from_ireq(iq);
+    ss = (db_seqnum_type *)malloc(sizeof(db_seqnum_type));
+    //memset(&ss, -1, sizeof(ss));
+    memset(ss, -1, sizeof(db_seqnum_type));
 
-    memset(&ss, -1, sizeof(ss));
-
-    rc = trans_commit_seqnum_int(bdb_handle, dbenv, iq, trans, &ss, logical,
+    rc = trans_commit_seqnum_int(bdb_handle, dbenv, iq, trans, ss, logical,
                                  blkseq, blklen, blkkey, blkkeylen);
 
     if (gbl_extended_sql_debug_trace && iq->have_snap_info) {
@@ -787,10 +788,10 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
     }
 
     rc = trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, source_host,
-                                   timeoutms, adaptive, &ss);
+                                   timeoutms, adaptive, ss);
 
     if (iq->is_wait_async==0 && cnonce) {
-        DB_LSN *lsn = (DB_LSN *)&ss;
+        DB_LSN *lsn = (DB_LSN *)ss;
         logmsg(LOGMSG_USER,
                "%s %s line %d: wait_for_seqnum [%d][%d] returns %d\n", cnonce,
                __func__, __LINE__, lsn->file, lsn->offset, rc);
