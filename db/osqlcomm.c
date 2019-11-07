@@ -5339,7 +5339,7 @@ int osql_comm_signal_sqlthr_rc(sorese_info_t *sorese, struct errstat *xerr,
 
     } else {
         /* local */
-
+        logmsg(LOGMSG_USER, "sending sorese locally %s:%d\n",__func__,__LINE__);
         irc = osql_chkboard_sqlsession_rc(sorese->rqid, sorese->uuid,
                                           sorese->nops, NULL, xerr);
     }
@@ -7124,6 +7124,7 @@ int osql_process_packet(struct ireq *iq, unsigned long long rqid, uuid_t uuid,
                     return 0;
                 } else {
                     /* this can happen if we're skipping delayed key adds */
+                    logmsg(LOGMSG_USER, "got duplicate message error in %s:%d\n",__func__, __LINE__);
                     reqerrstr(iq, COMDB2_CSTRT_RC_DUP, "add key constraint "
                                                        "duplicate key '%s' on "
                                                        "table '%s' index %d",

@@ -102,7 +102,7 @@ int handle_buf_main(
                      // type
     int luxref, unsigned long long rqid);
 //removing static, to be used in seqnum_wait.c
-pthread_mutex_t lock;
+static pthread_mutex_t lock;
 pthread_mutex_t buf_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_attr_t attr;
 
@@ -495,8 +495,10 @@ static void *thd_req(void *vthd)
         // 1.) should_wait_async -> flag to determine if we should farm away this request to be acked asynchronously
         // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
         logmsg(LOGMSG_DEBUG, "processing new request\n");
-        handle_ireq(thd->iq);
-        if(thd->iq->is_wait_async){
+        int is_wait_async = 0 ;
+        thd->iq->is_wait_async = &is_wait_async;
+        handle_ireq(thd->iq);;
+        if(is_wait_async){
             logmsg(LOGMSG_DEBUG, "request farmed off\n");
         }
         else{
@@ -531,7 +533,7 @@ static void *thd_req(void *vthd)
             }
             // If this request was farmed off to be acked asynchronously, then the following work has already been done. No need to repeat/
             // If it hasn't, then commit was acked in line. We need to do the following work here: 
-            if(thd->iq->is_wait_async == 0){
+            if(is_wait_async == 0){
                 if (thd->iq->usedb && thd->iq->ixused >= 0 &&
                     thd->iq->ixused < thd->iq->usedb->nix &&
                     thd->iq->usedb->ixuse) {
@@ -837,7 +839,9 @@ static int init_ireq(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     /* set up request */
     iq->hascommitlock = 0;
     iq->should_wait_async = 1; // by defualt we want all requests to be farmed off and acked asynchronously
-    iq->is_wait_async = 0;
+    iq->is_wait_async = 0; // zeroing out the pointer
+    iq->backed_out = 0;
+
     iq->num_reqs = 0;
     const size_t len = sizeof(*iq) - offsetof(struct ireq, region3);
     bzero(&iq->region3, len);
