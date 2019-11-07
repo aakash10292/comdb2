@@ -191,7 +191,7 @@ retry:
        this ensures no requests replays will be left stuck
        papers around other short returns in toblock jic
        */
-    if(iq->is_wait_async==0){
+    if(iq->is_wait_async!=NULL && *(iq->is_wait_async)==0){
         osql_blkseq_unregister(iq);
 
         Pthread_mutex_lock(&delay_lock);
@@ -286,7 +286,7 @@ int handle_ireq(struct ireq *iq)
             rc = opcode->opcode_handler(iq);
 
             /* Record the tablename (aka table) for this op */
-            if (iq->is_wait_async==0 && iq->usedb && iq->usedb->tablename) {
+            if (iq->is_wait_async!=NULL && *(iq->is_wait_async)==0 && iq->usedb && iq->usedb->tablename) {
                 reqlog_logl(iq->reqlogger, REQL_INFO, iq->usedb->tablename);
             }
         }
@@ -294,7 +294,7 @@ int handle_ireq(struct ireq *iq)
 
     if (rc == RC_INTERNAL_FORWARD) {
         rc = 0;
-    } else if(iq->is_wait_async==0) {
+    } else if(iq->is_wait_async!=NULL && *(iq->is_wait_async)==0) {
         /* SNDBAK RESPONSE */
         if (iq->debug) {
             reqprintf(iq, "iq->reply_len=%td RC %d\n",
@@ -339,6 +339,7 @@ int handle_ireq(struct ireq *iq)
 
             if (iq->sorese.rqid == 0)
                 abort();
+            logmsg(LOGMSG_USER, "Calling osql_comm_signal_sqlthr_rc from %s:%d with sorese_rc: %d\n", __func__, __LINE__, sorese_rc);
             osql_comm_signal_sqlthr_rc(&iq->sorese, &iq->errstat, sorese_rc);
 
             iq->timings.req_sentrc = osql_log_time();
@@ -405,7 +406,7 @@ int handle_ireq(struct ireq *iq)
         }
     }
 
-    if(iq->is_wait_async==0){
+    if(iq->is_wait_async!=NULL && *(iq->is_wait_async)==0){
         /* Unblock anybody waiting for stuff that was added in this transaction. */
         clear_trans_from_repl_list(iq->repl_list);
 

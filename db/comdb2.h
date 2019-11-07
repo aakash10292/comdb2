@@ -1410,8 +1410,10 @@ struct ireq {
     int written_row_count;
     /* REVIEW COMMENTS AT BEGINING OF STRUCT BEFORE ADDING NEW VARIABLES */
     int num_reqs;
-    int is_wait_async;
+    int *is_wait_async;
     int hascommitlock;
+    int backed_out;
+    char *source_host;
 };
 
 /* comdb array struct */

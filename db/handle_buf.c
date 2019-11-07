@@ -101,7 +101,7 @@ int handle_buf_main(
                      // type
     int luxref, unsigned long long rqid);
 //removing static, to be used in seqnum_wait.c
-pthread_mutex_t lock;
+static pthread_mutex_t lock;
 pthread_mutex_t buf_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_attr_t attr;
 
@@ -807,7 +807,9 @@ static int init_ireq_legacy(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     /* set up request */
     iq->hascommitlock = 0;
     iq->should_wait_async = 1; // by defualt we want all requests to be farmed off and acked asynchronously
-    iq->is_wait_async = 0;
+    iq->is_wait_async = 0; // zeroing out the pointer
+    iq->backed_out = 0;
+
     iq->num_reqs = 0;
     const size_t len = sizeof(*iq) - offsetof(struct ireq, region3);
     bzero(&iq->region3, len);
