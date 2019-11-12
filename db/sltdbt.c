@@ -204,7 +204,7 @@ retry:
 
     /* return codes we think the proxy understands.  all other cases
        return proxy retry */
-    if (rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
+    if (iq->is_wait_async!=NULL && *(iq->is_wait_async)==0 && rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
         rc != ERR_SQL_PREP && rc != ERR_NO_AUXDB && rc != ERR_INCOHERENT &&
         rc != ERR_SC_COMMIT && rc != ERR_CONSTR && rc != ERR_TRAN_FAILED &&
         rc != ERR_CONVERT_DTA && rc != ERR_NULL_CONSTRAINT &&

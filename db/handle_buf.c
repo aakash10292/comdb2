@@ -495,9 +495,9 @@ static void *thd_req(void *vthd)
         // 1.) should_wait_async -> flag to determine if we should farm away this request to be acked asynchronously
         // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
         logmsg(LOGMSG_DEBUG, "processing new request\n");
-        int is_wait_async = 0 ;
+        int is_wait_async = 0;
         thd->iq->is_wait_async = &is_wait_async;
-        handle_ireq(thd->iq);;
+        handle_ireq(thd->iq);
         if(is_wait_async){
             logmsg(LOGMSG_DEBUG, "request farmed off\n");
         }
