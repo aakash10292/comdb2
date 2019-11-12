@@ -710,7 +710,7 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
         break;
     }
 
-    if (iq->is_wait_async!=NULL && *(iq->is_wait_async)==0 && bdb_attr_get(dbenv->bdb_attr, BDB_ATTR_COHERENCY_LEASE)) {
+    if ((iq->is_wait_async==NULL || *(iq->is_wait_async)==0) && bdb_attr_get(dbenv->bdb_attr, BDB_ATTR_COHERENCY_LEASE)) {
         uint64_t now = gettimeofday_ms(), next_commit = next_commit_timestamp();
         if (next_commit > now)
             poll(0, 0, next_commit - now);
@@ -788,7 +788,7 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
     rc = trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, source_host,
                                    timeoutms, adaptive, ss);
 
-    if (iq->is_wait_async!=NULL && *(iq->is_wait_async)==0 && cnonce) {
+    if ((iq->is_wait_async==NULL || *(iq->is_wait_async)==0) && cnonce) {
         DB_LSN *lsn = (DB_LSN *)ss;
         logmsg(LOGMSG_USER,
                "%s %s line %d: wait_for_seqnum [%d][%d] returns %d\n", cnonce,
