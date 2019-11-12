@@ -192,7 +192,7 @@ retry:
        this ensures no requests replays will be left stuck
        papers around other short returns in toblock jic
        */
-    if(iq->is_wait_async!=NULL && *(iq->is_wait_async)==0){
+    if(iq->is_wait_async==NULL || *(iq->is_wait_async)==0){
         osql_blkseq_unregister(iq);
 
         Pthread_mutex_lock(&delay_lock);
@@ -204,7 +204,7 @@ retry:
 
     /* return codes we think the proxy understands.  all other cases
        return proxy retry */
-    if (iq->is_wait_async!=NULL && *(iq->is_wait_async)==0 && rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
+    if ((iq->is_wait_async==NULL || *(iq->is_wait_async)==0) && rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
         rc != ERR_SQL_PREP && rc != ERR_NO_AUXDB && rc != ERR_INCOHERENT &&
         rc != ERR_SC_COMMIT && rc != ERR_CONSTR && rc != ERR_TRAN_FAILED &&
         rc != ERR_CONVERT_DTA && rc != ERR_NULL_CONSTRAINT &&
@@ -287,7 +287,7 @@ int handle_ireq(struct ireq *iq)
             rc = opcode->opcode_handler(iq);
 
             /* Record the tablename (aka table) for this op */
-            if (iq->is_wait_async!=NULL && *(iq->is_wait_async)==0 && iq->usedb && iq->usedb->tablename) {
+            if ((iq->is_wait_async==NULL || *(iq->is_wait_async)==0) && iq->usedb && iq->usedb->tablename) {
                 reqlog_logl(iq->reqlogger, REQL_INFO, iq->usedb->tablename);
             }
         }
@@ -295,7 +295,7 @@ int handle_ireq(struct ireq *iq)
 
     if (rc == RC_INTERNAL_FORWARD) {
         rc = 0;
-    } else if(iq->is_wait_async!=NULL && *(iq->is_wait_async)==0) {
+    } else if(iq->is_wait_async==NULL || *(iq->is_wait_async)==0) {
         /* SNDBAK RESPONSE */
         if (iq->debug) {
             reqprintf(iq, "iq->reply_len=%td RC %d\n",
@@ -407,7 +407,7 @@ int handle_ireq(struct ireq *iq)
         }
     }
 
-    if(iq->is_wait_async!=NULL && *(iq->is_wait_async)==0){
+    if(iq->is_wait_async==NULL || *(iq->is_wait_async)==0){
         /* Unblock anybody waiting for stuff that was added in this transaction. */
         clear_trans_from_repl_list(iq->repl_list);
 
