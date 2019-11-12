@@ -5598,6 +5598,7 @@ add_blkseq:
                 } else {
                     iq->should_wait_async = 1;
                     irc = trans_commit_adaptive(iq, parent_trans, source_host);
+                    logmsg(LOGMSG_USER, "trans_commit_adaptive returned returned %d\n", irc);
                 }
                 if (hascommitlock) {
                     Pthread_rwlock_unlock(&commit_lock);
