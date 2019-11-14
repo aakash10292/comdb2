@@ -107,7 +107,7 @@ extern pthread_mutex_t delay_lock;
 extern __thread snap_uid_t *osql_snap_info; /* contains cnonce */
 extern int gbl_print_deadlock_cycles;
 
-static int handle_op_block(struct ireq *iq)
+static int handle_op_block(struct ireq *iq,int *is_wait_async)
 {
     int rc;
     int retries;
@@ -137,7 +137,7 @@ static int handle_op_block(struct ireq *iq)
     gbl_penaltyincpercent_d = (double)gbl_penaltyincpercent * .01;
 
 retry:
-    rc = toblock(iq);
+    rc = toblock(iq,is_wait_async);
 
     extern int gbl_test_blkseq_replay_code;
     if (gbl_test_blkseq_replay_code &&
@@ -191,7 +191,7 @@ retry:
        this ensures no requests replays will be left stuck
        papers around other short returns in toblock jic
        */
-    if(iq->is_wait_async==NULL || *(iq->is_wait_async)==0){
+    if(*(is_wait_async)==0){
         osql_blkseq_unregister(iq);
 
         Pthread_mutex_lock(&delay_lock);
@@ -203,7 +203,7 @@ retry:
 
     /* return codes we think the proxy understands.  all other cases
        return proxy retry */
-    if ((iq->is_wait_async==NULL || *(iq->is_wait_async)==0) && rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
+    if ((*(is_wait_async)==0) && rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
         rc != ERR_SQL_PREP && rc != ERR_NO_AUXDB && rc != ERR_INCOHERENT &&
         rc != ERR_SC_COMMIT && rc != ERR_CONSTR && rc != ERR_TRAN_FAILED &&
         rc != ERR_CONVERT_DTA && rc != ERR_NULL_CONSTRAINT &&
@@ -243,7 +243,7 @@ int init_opcode_handlers()
     return 0;
 }
 
-int handle_ireq(struct ireq *iq)
+int handle_ireq(struct ireq *iq, int *is_wait_async)
 {
     int rc;
 
@@ -283,10 +283,10 @@ int handle_ireq(struct ireq *iq)
             rc = ERR_BADREQ;
             iq->where = "opcode execution skipped";
         } else {
-            rc = opcode->opcode_handler(iq);
+            rc = opcode->opcode_handler(iq,is_wait_async);
 
             /* Record the tablename (aka table) for this op */
-            if ((iq->is_wait_async==NULL || *(iq->is_wait_async)==0) && iq->usedb && iq->usedb->tablename) {
+            if ((*(is_wait_async)==0) && iq->usedb && iq->usedb->tablename) {
                 reqlog_logl(iq->reqlogger, REQL_INFO, iq->usedb->tablename);
             }
         }
@@ -294,7 +294,7 @@ int handle_ireq(struct ireq *iq)
 
     if (rc == RC_INTERNAL_FORWARD) {
         rc = 0;
-    } else if(iq->is_wait_async==NULL || *(iq->is_wait_async)==0) {
+    } else if(*(is_wait_async)==0) {
         /* SNDBAK RESPONSE */
         if (iq->debug) {
             reqprintf(iq, "iq->reply_len=%td RC %d\n",
@@ -406,7 +406,7 @@ int handle_ireq(struct ireq *iq)
         }
     }
 
-    if(iq->is_wait_async==NULL || *(iq->is_wait_async)==0){
+    if(is_wait_async==NULL || *(is_wait_async)==0){
         /* Unblock anybody waiting for stuff that was added in this transaction. */
         clear_trans_from_repl_list(iq->repl_list);
 
@@ -424,11 +424,11 @@ int handle_ireq(struct ireq *iq)
         }
 
         /* Finish off logging. */
-        if (iq->blocksql_tran) {
+        /*if (iq->blocksql_tran) {
             osql_bplog_reqlog_queries(iq);
         }
         reqlog_end_request(iq->reqlogger, rc, __func__, __LINE__);
-        release_node_stats(NULL, NULL, iq->frommach);
+        release_node_stats(NULL, NULL, iq->frommach);*/
             if (gbl_print_deadlock_cycles)
                 osql_snap_info = NULL;
 

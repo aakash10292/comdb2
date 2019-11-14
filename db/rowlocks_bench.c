@@ -83,7 +83,7 @@ static void commit_bench_int(bdb_state_type *bdb_state, int op, int tcount,
             }
         }
 
-        if ((rc = trans_commit_adaptive(&iq, trans, gbl_mynode)) != 0) {
+        if ((rc = trans_commit_adaptive(&iq, trans, gbl_mynode,NULL)) != 0) {
             fprintf(stderr, "%s: trans_commit returns %d\n", __func__, rc);
             return;
         }

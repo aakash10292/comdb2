@@ -23,7 +23,7 @@ struct comdb2_opcode {
     /* Name of the opcode */
     const char *name;
     /* The handler function */
-    int (*opcode_handler)(struct ireq *);
+    int (*opcode_handler)(struct ireq *, int *is_wait_async);
 };
 typedef struct comdb2_opcode comdb2_opcode_t;
 

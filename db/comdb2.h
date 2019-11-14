@@ -1410,7 +1410,6 @@ struct ireq {
     int written_row_count;
     /* REVIEW COMMENTS AT BEGINING OF STRUCT BEFORE ADDING NEW VARIABLES */
     int num_reqs;
-    int *is_wait_async;
     int hascommitlock;
     int backed_out;
     char *source_host;
@@ -2001,7 +2000,7 @@ tran_type *trans_start_snapisol(struct ireq *, int trak, int epoch, int file,
 tran_type *trans_start_socksql(struct ireq *, int trak);
 int trans_commit(struct ireq *iq, void *trans, char *source_host);
 int trans_commit_seqnum(struct ireq *iq, void *trans, db_seqnum_type *seqnum);
-int trans_commit_adaptive(struct ireq *iq, void *trans, char *source_host);
+int trans_commit_adaptive(struct ireq *iq, void *trans, char *source_host,int *is_wait_async);
 int trans_commit_logical(struct ireq *iq, void *trans, char *source_host,
                          int timeoutms, int adaptive, void *blkseq, int blklen,
                          void *blkkey, int blkkeylen);
@@ -2526,8 +2525,8 @@ void *get_sqlite_entry(struct sql_thread *thd, int n);
 struct dbtable *get_sqlite_db(struct sql_thread *thd, int iTable, int *ixnum);
 
 int schema_var_size(struct schema *sc);
-int handle_ireq(struct ireq *iq);
-int toblock(struct ireq *iq);
+int handle_ireq(struct ireq *iq,int *is_wait_async);
+int toblock(struct ireq *iq,int *is_wait_async);
 void count_table_in_thread(const char *table);
 int findkl_enable_blob_verify(void);
 void sltdbt_get_stats(int *n_reqs, int *l_reqs);

@@ -70,6 +70,8 @@ enum seqnum_wait_state{
     FREE
 };
 struct seqnum_wait{
+    LINKC_T(struct seqnum_wait) lsn_lnk;
+    LINKC_T(struct seqnum_wait) absolute_ts_lnk;
     enum seqnum_wait_state cur_state;           // Cur state of the work item designating progress made on this work item. 
     int  now, cntbytes;
     const char *nodelist[REPMAX];
@@ -106,8 +108,6 @@ struct seqnum_wait{
     uint64_t txnsize;
     int newcoh;
     int got_ack_from_atleast_one_node;
-    LINKC_T(struct seqnum_wait) lsn_lnk;
-    LINKC_T(struct seqnum_wait) absolute_ts_lnk;
 };
 
 typedef struct{
@@ -119,7 +119,7 @@ typedef struct{
     uint64_t next_commit_timestamp;
 }seqnum_wait_queue;
 // Add work item to seqnum_wait_queue.
-int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh);
+int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh,int *is_wait_async);
 int seqnum_wait_gbl_mem_init();
 void seqnum_wait_cleanup();
 
