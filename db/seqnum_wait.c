@@ -141,7 +141,7 @@ void add_to_lsn_list(struct seqnum_wait *item){
     {
         if(log_compare(&(item->seqnum->lsn), &(add_before_lsn->seqnum->lsn)) < 0){
             listc_add_before(&(work_queue->lsn_list),item,add_before_lsn);
-            printf("Successfully added new item %d:%d\n",item->seqnum->lsn.file, item->seqnum->lsn.offset);
+            printf("Successfully added new item %d:%d before %d:%d\n",item->seqnum->lsn.file, item->seqnum->lsn.offset,add_before_lsn->seqnum->lsn.file, add_before_lsn->seqnum->lsn.offset);
             return;
         }
     }
@@ -161,25 +161,26 @@ void add_to_absolute_ts_list(struct seqnum_wait *item){
     {
         if(ts_compare(item->next_ts, add_before_ts->next_ts) <= 0){
            listc_add_before(&(work_queue->absolute_ts_list),item,add_before_ts);
+            printf("Successfully added new item with ts %d before item with ts %d\n",item->next_ts,add_before_ts->next_ts);
            return;
         }
     }
 
     // updated next timestamp for this item is the highest yet... Adding to end of absolute_ts_list
     listc_abl(&(work_queue->absolute_ts_list), item);
-    printf("Successfully added new item %d:%d\n to the back of the list",item->seqnum->lsn.file, item->seqnum->lsn.offset);
+    printf("Successfully added new with next_ts %d to the back of the list\n",item->next_ts);
     print_lists();
 }
 
 
-int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh){
+int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh,int *is_wait_async){
     struct seqnum_wait *swait = allocate_seqnum_wait();
     if(swait==NULL){
         // Could not allocate memory...  return 0 here to relapse to waiting inline
-        *(iq->is_wait_async)=0;
+        *(is_wait_async)=0;
         return 0; 
     }
-    *(iq->is_wait_async)=1;
+    *(is_wait_async)=1;
     swait->cur_state = INIT;
     swait->iq = iq;
     swait->bdb_state = bdb_handle_from_ireq(iq);
@@ -199,7 +200,7 @@ int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutm
     swait->next_ts = comdb2_time_epochms();
     swait->absolute_ts_lnk.prev = NULL;
     swait->absolute_ts_lnk.next = NULL;
-
+    swait->outrc = 0;
     swait->lsn_lnk.next = NULL;
     swait->lsn_lnk.prev = NULL;
 
@@ -226,6 +227,7 @@ int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutm
 void remove_from_seqnum_wait_queue(struct seqnum_wait *item){
     listc_rfl(&work_queue->absolute_ts_list, item);
     listc_rfl(&work_queue->lsn_list, item);
+
 }
 
 // removes the work item from the two lists, and returns memory back to mempool
@@ -657,6 +659,43 @@ void process_work_item(struct seqnum_wait *item){
             } else {
                 item->iq->dbenv->txns_aborted++;
             }
+    /*if (item->iq->txnsize > item->iq->dbenv->biggest_txn)
+        item->iq->dbenv->biggest_txn = item->iq->txnsize;
+    item->iq->dbenv->total_txn_sz = item->iq->txnsize;
+    item->iq->dbenv->num_txns++;
+    if (item->iq->timeoutms > item->iq->dbenv->max_timeout_ms)
+        item->iq->dbenv->max_timeout_ms = item->iq->timeoutms;
+    item->iq->dbenv->total_timeouts_ms += item->iq->timeoutms;
+    if (item->iq->reptimems > item->iq->dbenv->max_reptime_ms)
+        item->iq->dbenv->max_reptime_ms = item->iq->reptimems;
+    item->iq->dbenv->total_reptime_ms += item->iq->reptimems;
+
+    if (item->iq->debug) {
+        uint64_t rate;
+        if (item->iq->reptimems)
+            rate = item->iq->txnsize / item->iq->reptimems;
+        else
+            rate = 0;
+        reqprintf(item->iq, "%p:TRANSACTION SIZE %llu TIMEOUT %d REPTIME %d RATE "
+                      "%llu",
+                  trans, item->iq->txnsize, item->iq->timeoutms, item->iq->reptimems, rate);
+    }
+
+    int diff_time_micros = (int)reqlog_current_us(item->iq->reqlogger);
+
+    Pthread_mutex_lock(&commit_stat_lk);
+    n_commit_time += diff_time_micros;
+    n_commits++;
+    Pthread_mutex_unlock(&commit_stat_lk);
+
+    if (item->outrc == 0) {
+        if (item->iq->__limits.maxcost_warn &&
+            (item->iq->cost > iq->__limits.maxcost_warn)) {
+            logmsg(LOGMSG_WARN, "[%s] warning: transaction exceeded cost threshold "
+                            "(%f >= %f)\n",
+                    item->iq->corigin, item->iq->cost, item->iq->__limits.maxcost_warn);
+        }
+    }*/
             bdb_checklock(thedb->bdb_env);    
             item->iq->timings.req_finished = osql_log_time();
             item->iq->timings.retries++;
@@ -664,7 +703,7 @@ void process_work_item(struct seqnum_wait *item){
             if(item->iq->backed_out)
             {
                 item->iq->should_wait_async = 0;
-                trans_wait_for_last_seqnum(item->iq,item->iq->source_host);
+                item->outrc=trans_wait_for_last_seqnum(item->iq,item->iq->source_host);
             }
             if (item->outrc != 0 && item->outrc != ERR_BLOCK_FAILED && item->outrc != ERR_READONLY &&
                 item->outrc != ERR_SQL_PREP && item->outrc != ERR_NO_AUXDB && item->outrc != ERR_INCOHERENT &&
@@ -684,7 +723,7 @@ void process_work_item(struct seqnum_wait *item){
                 item->outrc = ERR_NOMASTER;
             }
 
-            //javasp_trans_end(item->iq->jsph);
+            javasp_trans_end(item->iq->jsph);
             block_state_free(item->iq->blkstate);
             if(item->iq->usedb && item->iq->usedb->tablename)
                 reqlog_logl(item->iq->reqlogger, REQL_INFO, item->iq->usedb->tablename);
@@ -788,11 +827,11 @@ void process_work_item(struct seqnum_wait *item){
             }
 
             /* Finish off logging. */
-            if (item->iq->blocksql_tran) {
+            /*if (item->iq->blocksql_tran) {
                 osql_bplog_reqlog_queries(item->iq);
             }
             reqlog_end_request(item->iq->reqlogger, item->outrc, __func__, __LINE__);
-            release_node_stats(NULL, NULL, item->iq->frommach);
+            release_node_stats(NULL, NULL, item->iq->frommach);*/
             if (gbl_print_deadlock_cycles)
                 osql_snap_info = NULL;
 
@@ -849,16 +888,13 @@ void process_work_item(struct seqnum_wait *item){
             //UNLOCK(&lock);
             // We are done handling this request completely.
             item->cur_state = FREE; 
-        case FREE: 
-               logmsg(LOGMSG_DEBUG, "+++Done processing work item: %d:%d... Freeing it\n",item->seqnum->lsn.file, item->seqnum->lsn.offset);
-               free_work_item(item);
-               break;
-
+            break;
     }// End of Switch
 }
 
 void *queue_processor(void *arg){
     struct seqnum_wait *item = NULL;
+    struct seqnum_wait *next_item = NULL;
     struct timespec waittime;
     int wait_rc = 0;
     int now = 0;
@@ -886,6 +922,15 @@ void *queue_processor(void *arg){
             Pthread_mutex_unlock(&(work_queue->mutex));
             now = comdb2_time_epochms();
             while(item!=NULL && (item->next_ts <= now)){
+                if(item->cur_state == FREE){
+                    logmsg(LOGMSG_DEBUG, "+++Done processing work item: %d:%d... Freeing it\n",item->seqnum->lsn.file, item->seqnum->lsn.offset);
+                    Pthread_mutex_lock(&(work_queue->mutex));
+                    next_item = item->lsn_lnk.next;
+                    Pthread_mutex_unlock(&(work_queue->mutex));
+                    free_work_item(item);
+                    item = next_item;
+                    continue;
+                }
                 logmsg(LOGMSG_DEBUG, "+++Processing work item: %d:%d, in state: %d\n",item->seqnum->lsn.file, item->seqnum->lsn.offset,item->cur_state);
                 process_work_item(item);
                 printf("locking at %d: \n",__LINE__);
@@ -905,6 +950,15 @@ void *queue_processor(void *arg){
                 printf("unlocking at %d: \n",__LINE__);
             Pthread_mutex_unlock(&(work_queue->mutex));
             while(item!=NULL){
+                if(item->cur_state == FREE){
+                    logmsg(LOGMSG_DEBUG, "+++Done processing work item: %d:%d... Freeing it\n",item->seqnum->lsn.file, item->seqnum->lsn.offset);
+                    Pthread_mutex_lock(&(work_queue->mutex));
+                    next_item = item->lsn_lnk.next;
+                    Pthread_mutex_unlock(&(work_queue->mutex));
+                    free_work_item(item);
+                    item = next_item;
+                    continue;
+                }
                 logmsg(LOGMSG_DEBUG, "+++Processing work item: %d:%d, in state: %d\n",item->seqnum->lsn.file, item->seqnum->lsn.offset,item->cur_state);
                 process_work_item(item);
                 printf("locking at %d: \n",__LINE__);
@@ -930,7 +984,7 @@ void *queue_processor(void *arg){
                 Pthread_mutex_lock(&(item->bdb_state->seqnum_info->lock));
                 wait_rc = pthread_cond_timedwait(&(item->bdb_state->seqnum_info->cond),
                                             &(item->bdb_state->seqnum_info->lock), &waittime); 
-                if(wait_rc != ETIMEDOUT)
+                if(wait_rc !=   ETIMEDOUT)
                     Pthread_mutex_unlock(&(item->bdb_state->seqnum_info->lock));
             }
             else{

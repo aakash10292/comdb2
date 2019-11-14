@@ -496,8 +496,7 @@ static void *thd_req(void *vthd)
         // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
         logmsg(LOGMSG_DEBUG, "processing new request\n");
         int is_wait_async = 0;
-        thd->iq->is_wait_async = &is_wait_async;
-        handle_ireq(thd->iq);
+        handle_ireq(thd->iq,&is_wait_async);
         if(is_wait_async){
             logmsg(LOGMSG_DEBUG, "request farmed off\n");
         }
@@ -839,7 +838,6 @@ static int init_ireq(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     /* set up request */
     iq->hascommitlock = 0;
     iq->should_wait_async = 1; // by defualt we want all requests to be farmed off and acked asynchronously
-    iq->is_wait_async = 0; // zeroing out the pointer
     iq->backed_out = 0;
 
     iq->num_reqs = 0;

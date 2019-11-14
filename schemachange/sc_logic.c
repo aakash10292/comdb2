@@ -308,7 +308,7 @@ static int do_finalize(ddl_t func, struct ireq *iq,
     if (input_tran == NULL) {
         // void all_locks(void*);
         // all_locks(thedb->bdb_env);
-        rc = trans_commit_adaptive(iq, tran, gbl_mynode);
+        rc = trans_commit_adaptive(iq, tran, gbl_mynode,NULL);
         if (rc) {
             sc_errf(s, "Failed to commit finalize transaction\n");
             return rc;
