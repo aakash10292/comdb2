@@ -32,13 +32,20 @@
 #include "plhash.h"
 #include "comdb2_plugin.h"
 #include "comdb2_opcode.h"
-
+#include<bdb_int.h>
 void pack_tail(struct ireq *iq);
 extern int glblroute_get_buffer_capacity(int *bf);
 extern int sorese_send_commitrc(struct ireq *iq, int rc);
 
 void (*comdb2_ipc_sndbak_len_sinfo)(struct ireq *, int) = 0;
+int add_to_seqnum_wait_queue(bdb_state_type* bdb_state, seqnum_type *seqnum,struct dbenv *dbenv,sorese_info_t *sorese, errstat_t *errstat,int rc);
+int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
+                                     struct ireq *iq, char *source_node,
+                                     int timeoutms, int adaptive,
+                                     db_seqnum_type *ss);
 
+void *bdb_handle_from_ireq(const struct ireq *iq);
+struct dbenv *dbenv_from_ireq(const struct ireq *iq);
 /* HASH of all registered opcode handlers (one handler per opcode) */
 hash_t *gbl_opcode_hash;
 
@@ -107,7 +114,7 @@ extern pthread_mutex_t delay_lock;
 extern __thread snap_uid_t *osql_snap_info; /* contains cnonce */
 extern int gbl_print_deadlock_cycles;
 
-static int handle_op_block(struct ireq *iq,int *is_wait_async)
+static int handle_op_block(struct ireq *iq)
 {
     int rc;
     int retries;
@@ -137,7 +144,7 @@ static int handle_op_block(struct ireq *iq,int *is_wait_async)
     gbl_penaltyincpercent_d = (double)gbl_penaltyincpercent * .01;
 
 retry:
-    rc = toblock(iq,is_wait_async);
+    rc = toblock(iq);
 
     extern int gbl_test_blkseq_replay_code;
     if (gbl_test_blkseq_replay_code &&
@@ -191,7 +198,6 @@ retry:
        this ensures no requests replays will be left stuck
        papers around other short returns in toblock jic
        */
-    if(*(is_wait_async)==0){
         osql_blkseq_unregister(iq);
 
         Pthread_mutex_lock(&delay_lock);
@@ -199,11 +205,10 @@ retry:
         gbl_maxwthreadpenalty -= totpen;
 
         Pthread_mutex_unlock(&delay_lock);
-    }
 
     /* return codes we think the proxy understands.  all other cases
        return proxy retry */
-    if ((*(is_wait_async)==0) && rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
+    if (rc != 0 && rc != ERR_BLOCK_FAILED && rc != ERR_READONLY &&
         rc != ERR_SQL_PREP && rc != ERR_NO_AUXDB && rc != ERR_INCOHERENT &&
         rc != ERR_SC_COMMIT && rc != ERR_CONSTR && rc != ERR_TRAN_FAILED &&
         rc != ERR_CONVERT_DTA && rc != ERR_NULL_CONSTRAINT &&
@@ -243,7 +248,7 @@ int init_opcode_handlers()
     return 0;
 }
 
-int handle_ireq(struct ireq *iq, int *is_wait_async)
+int handle_ireq(struct ireq *iq)
 {
     int rc;
 
@@ -283,10 +288,10 @@ int handle_ireq(struct ireq *iq, int *is_wait_async)
             rc = ERR_BADREQ;
             iq->where = "opcode execution skipped";
         } else {
-            rc = opcode->opcode_handler(iq,is_wait_async);
+            rc = opcode->opcode_handler(iq);
 
             /* Record the tablename (aka table) for this op */
-            if ((*(is_wait_async)==0) && iq->usedb && iq->usedb->tablename) {
+            if ( iq->usedb && iq->usedb->tablename) {
                 reqlog_logl(iq->reqlogger, REQL_INFO, iq->usedb->tablename);
             }
         }
@@ -294,7 +299,7 @@ int handle_ireq(struct ireq *iq, int *is_wait_async)
 
     if (rc == RC_INTERNAL_FORWARD) {
         rc = 0;
-    } else if(*(is_wait_async)==0) {
+    } 
         /* SNDBAK RESPONSE */
         if (iq->debug) {
             reqprintf(iq, "iq->reply_len=%td RC %d\n",
@@ -303,46 +308,53 @@ int handle_ireq(struct ireq *iq, int *is_wait_async)
 
         /* pack data at tail of reply */
         pack_tail(iq);
+        int enqueued = 0;
 
         if (iq->sorese.type) {
-            /* we don't have a socket or a buffer for that matter,
-             * instead, we need to send back the result of transaction from rc
-             */
-
-            /*
-               hack alert
-               override the extended code (which we don't care about, with
-               the primary error code
-               */
-            if (rc && (!iq->sorese.rcout || rc == ERR_NOT_DURABLE))
-                iq->sorese.rcout = rc;
-
-            int sorese_rc = rc;
-            if (rc == 0 && iq->sorese.rcout == 0 &&
-                iq->errstat.errval == COMDB2_SCHEMACHANGE_OK) {
-                // pretend error happend to get errstat shipped to replicant
-                sorese_rc = 1;
-            } else {
-                iq->errstat.errval = iq->sorese.rcout;
+            bdb_state_type *bdb_handle = (bdb_state_type *)bdb_handle_from_ireq(iq);
+            struct dbenv *dbenv = (struct dbenv *)dbenv_from_ireq(iq);
+            extern int gbl_seqnum_wait_init_success;
+            if(gbl_seqnum_wait_init_success && !(bdb_handle->attr->durable_lsns)){
+                enqueued = add_to_seqnum_wait_queue(bdb_handle, (seqnum_type *)iq->commit_seqnum, dbenv, &iq->sorese,&iq->errstat,rc);
             }
+            if(!enqueued){
+              // We couldn't farm off distributed commit. So we do it here
+               rc = trans_wait_for_seqnum_int(bdb_handle,dbenv, iq,gbl_mynode,-1,1,iq->commit_seqnum);
+               //We can free commit_seqnum here as :
+               //1.) We haven't farmed off for distributed commit.
+               //2.) We have performed distributed commit in line , and no longer need the commit_seqnum.
+               free(iq->commit_seqnum);
+               
+                if (rc && (!iq->sorese.rcout || rc == ERR_NOT_DURABLE))
+                    iq->sorese.rcout = rc;
 
-            if (iq->debug) {
-                uuidstr_t us;
-                reqprintf(iq,
-                          "sorese returning rqid=%llu uuid=%s node=%s type=%d "
-                          "nops=%d rcout=%d retried=%d RC=%d errval=%d\n",
-                          iq->sorese.rqid, comdb2uuidstr(iq->sorese.uuid, us),
-                          iq->sorese.host, iq->sorese.type, iq->sorese.nops,
-                          iq->sorese.rcout, iq->sorese.osql_retry, rc,
-                          iq->errstat.errval);
-            }
+                int sorese_rc = rc;
+                if (rc == 0 && iq->sorese.rcout == 0 &&
+                    iq->errstat.errval == COMDB2_SCHEMACHANGE_OK) {
+                    // pretend error happend to get errstat shipped to replicant
+                    sorese_rc = 1;
+                } else {
+                    iq->errstat.errval = iq->sorese.rcout;
+                }
 
-            if (iq->sorese.rqid == 0)
-                abort();
-            logmsg(LOGMSG_USER, "Calling osql_comm_signal_sqlthr_rc from %s:%d with sorese_rc: %d\n", __func__, __LINE__, sorese_rc);
-            osql_comm_signal_sqlthr_rc(&iq->sorese, &iq->errstat, sorese_rc);
+                if (iq->debug) {
+                    uuidstr_t us;
+                    reqprintf(iq,
+                              "sorese returning rqid=%llu uuid=%s node=%s type=%d "
+                              "nops=%d rcout=%d retried=%d RC=%d errval=%d\n",
+                              iq->sorese.rqid, comdb2uuidstr(iq->sorese.uuid, us),
+                              iq->sorese.host, iq->sorese.type, iq->sorese.nops,
+                              iq->sorese.rcout, iq->sorese.osql_retry, rc,
+                              iq->errstat.errval);
+                }
 
-            iq->timings.req_sentrc = osql_log_time();
+                if (iq->sorese.rqid == 0)
+                    abort();
+                logmsg(LOGMSG_USER, "Calling osql_comm_signal_sqlthr_rc from %s:%d with sorese_rc: %d\n", __func__, __LINE__, sorese_rc);
+                osql_comm_signal_sqlthr_rc(&iq->sorese, &iq->errstat, sorese_rc);
+
+                iq->timings.req_sentrc = osql_log_time();
+           }
 
 #if 0
             /*
@@ -404,9 +416,8 @@ int handle_ireq(struct ireq *iq, int *is_wait_async)
         } else if (comdb2_ipc_sndbak_len_sinfo) {
             comdb2_ipc_sndbak_len_sinfo(iq, rc);
         }
-    }
+    
 
-    if(is_wait_async==NULL || *(is_wait_async)==0){
         /* Unblock anybody waiting for stuff that was added in this transaction. */
         clear_trans_from_repl_list(iq->repl_list);
 
@@ -424,11 +435,11 @@ int handle_ireq(struct ireq *iq, int *is_wait_async)
         }
 
         /* Finish off logging. */
-        /*if (iq->blocksql_tran) {
+        if (iq->blocksql_tran) {
             osql_bplog_reqlog_queries(iq);
         }
         reqlog_end_request(iq->reqlogger, rc, __func__, __LINE__);
-        release_node_stats(NULL, NULL, iq->frommach);*/
+        release_node_stats(NULL, NULL, iq->frommach);
             if (gbl_print_deadlock_cycles)
                 osql_snap_info = NULL;
 
@@ -443,7 +454,6 @@ int handle_ireq(struct ireq *iq, int *is_wait_async)
             /* Make sure we do not leak locks */
 
             bdb_checklock(thedb->bdb_env);
-        }
    
 
     return rc;

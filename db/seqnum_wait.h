@@ -1,5 +1,7 @@
 #ifndef INCLUDED_SEQNUM_WAIT_H
 #define INCLUDED_SEQNUM_WAIT_H
+#include<comdb2.h>
+#include<errstat.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <pthread.h>
@@ -58,7 +60,6 @@
 
 #include <inttypes.h>
 
-
 // Copied this #define from rep.c. Make sure to mirror changes
 #define MILLISEC 1000
 enum seqnum_wait_state{
@@ -80,15 +81,12 @@ struct seqnum_wait{
     DB_LSN *masterlsn;
     int numnodes;
     int numwait;
-    int rc;
     int waitms;
     int numskip;
     int numfailed;
     int outrc;
     int num_incoh;
     int next_ts;              // timestamp in the future when this item has to be "worked" on
-    int reset_wait_time; 
-    int remaining_wait_time;
     struct timespec wait_time;
     int start_time , end_time;
     int we_used;
@@ -96,17 +94,15 @@ struct seqnum_wait{
     char str[80];
     int track_once;
     DB_LSN nodelsn;
+    errstat_t errstat;
+    sorese_info_t sorese;
     uint32_t nodegen;
     int num_successfully_acked;
     int total_connected;
     int lock_desired;
-    struct ireq *iq;
     bdb_state_type *bdb_state;
     struct dbenv *dbenv;
-    seqnum_type *seqnum;
-    int *timeoutms;
-    uint64_t txnsize;
-    int newcoh;
+    seqnum_type seqnum;
     int got_ack_from_atleast_one_node;
 };
 
@@ -119,7 +115,7 @@ typedef struct{
     uint64_t next_commit_timestamp;
 }seqnum_wait_queue;
 // Add work item to seqnum_wait_queue.
-int add_to_seqnum_wait_queue(struct ireq *iq, seqnum_type *seqnum, int *timeoutms, uint64_t txnsize, int newcoh,int *is_wait_async);
+int add_to_seqnum_wait_queue(bdb_state_type* bdb_state,seqnum_type *seqnum,struct dbenv *dbenv,sorese_info_t *sorese, errstat_t *errstat,int rc);
 int seqnum_wait_gbl_mem_init();
 void seqnum_wait_cleanup();
 
