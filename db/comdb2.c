@@ -1302,9 +1302,7 @@ static void *purge_old_files_thread(void *arg)
         }
 
         if (rc == 0) {
-            iq.should_wait_async = 0;
             rc = trans_commit(&iq, trans, gbl_mynode);
-            iq.should_wait_async = 1;
             if (rc) {
                 if (rc == RC_INTERNAL_RETRY && retries < 10) {
                     retries++;

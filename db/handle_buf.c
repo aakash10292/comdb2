@@ -491,18 +491,7 @@ static void *thd_req(void *vthd)
         thrman_where(thr_self, req2a(thd->iq->opcode));
         thrman_origin(thr_self, getorigin(thd->iq));
         user_request_begin(REQUEST_TYPE_QTRAP, FLAG_REQUEST_TRACK_EVERYTHING);
-        // Introduced two flags into iq :
-        // 1.) should_wait_async -> flag to determine if we should farm away this request to be acked asynchronously
-        // 2.) is_wait_async -> flag that indicates if farming-off(if deemed necessary) was successful or not
-        logmsg(LOGMSG_DEBUG, "processing new request\n");
-        int is_wait_async = 0;
-        handle_ireq(thd->iq,&is_wait_async);
-        if(is_wait_async){
-            logmsg(LOGMSG_DEBUG, "request farmed off\n");
-        }
-        else{
-            logmsg(LOGMSG_DEBUG, "request processed inline\n");
-        }
+        handle_ireq(thd->iq);
         if (debug_this_request(gbl_debug_until) ||
             (gbl_who > 0 && !gbl_sdebug)) {
             struct per_request_stats *st;
@@ -517,10 +506,7 @@ static void *thd_req(void *vthd)
         thrman_origin(thr_self, NULL);
         thrman_where(thr_self, "idle");
         thd->iq->where = "done executing";
-        //if(thd->iq->is_wait_async == 0){
-            // before acquiring next request, yield
-            comdb2bma_yield_all();
-        //}
+        comdb2bma_yield_all();
         /*NEXT REQUEST*/
         LOCK(&lock)
         {
@@ -530,44 +516,40 @@ static void *thd_req(void *vthd)
             if (iamwriter) {
                 write_thd_count--;
             }
-            // If this request was farmed off to be acked asynchronously, then the following work has already been done. No need to repeat/
-            // If it hasn't, then commit was acked in line. We need to do the following work here: 
-            if(is_wait_async == 0){
-                if (thd->iq->usedb && thd->iq->ixused >= 0 &&
-                    thd->iq->ixused < thd->iq->usedb->nix &&
-                    thd->iq->usedb->ixuse) {
-                    thd->iq->usedb->ixuse[thd->iq->ixused] += thd->iq->ixstepcnt;
-                }
-                thd->iq->ixused = -1;
-                thd->iq->ixstepcnt = 0;
-
-                if (thd->iq->dbglog_file) {
-                    sbuf2close(thd->iq->dbglog_file);
-                    thd->iq->dbglog_file = NULL;
-                }
-                if (thd->iq->nwrites) {
-                    free(thd->iq->nwrites);
-                    thd->iq->nwrites = NULL;
-                }
-                if (thd->iq->vfy_genid_hash) {
-                    hash_free(thd->iq->vfy_genid_hash);
-                    thd->iq->vfy_genid_hash = NULL;
-                }
-                if (thd->iq->vfy_genid_pool) {
-                    pool_free(thd->iq->vfy_genid_pool);
-                    thd->iq->vfy_genid_pool = NULL;
-                }
-                if (thd->iq->sorese.osqllog) {
-                    sbuf2close(thd->iq->sorese.osqllog);
-                    thd->iq->sorese.osqllog = NULL;
-                }
-                thd->iq->vfy_genid_track = 0;
-#if 0
-                fprintf(stderr, "%s:%d: THD=%d relablk iq=%p\n", __func__, __LINE__, pthread_self(), thd->iq);
-#endif
-                pool_relablk(p_reqs, thd->iq); /* this request is done, so release
-                                                * resource. */
+            if (thd->iq->usedb && thd->iq->ixused >= 0 &&
+                thd->iq->ixused < thd->iq->usedb->nix &&
+                thd->iq->usedb->ixuse) {
+                thd->iq->usedb->ixuse[thd->iq->ixused] += thd->iq->ixstepcnt;
             }
+            thd->iq->ixused = -1;
+            thd->iq->ixstepcnt = 0;
+
+            if (thd->iq->dbglog_file) {
+                sbuf2close(thd->iq->dbglog_file);
+                thd->iq->dbglog_file = NULL;
+            }
+            if (thd->iq->nwrites) {
+                free(thd->iq->nwrites);
+                thd->iq->nwrites = NULL;
+            }
+            if (thd->iq->vfy_genid_hash) {
+                hash_free(thd->iq->vfy_genid_hash);
+                thd->iq->vfy_genid_hash = NULL;
+            }
+            if (thd->iq->vfy_genid_pool) {
+                pool_free(thd->iq->vfy_genid_pool);
+                thd->iq->vfy_genid_pool = NULL;
+            }
+            if (thd->iq->sorese.osqllog) {
+                sbuf2close(thd->iq->sorese.osqllog);
+                thd->iq->sorese.osqllog = NULL;
+            }
+            thd->iq->vfy_genid_track = 0;
+#if 0
+            fprintf(stderr, "%s:%d: THD=%d relablk iq=%p\n", __func__, __LINE__, pthread_self(), thd->iq);
+#endif
+            pool_relablk(p_reqs, thd->iq); /* this request is done, so release
+                                            * resource. */
             /* get next item off hqueue */
             nxtrq = (struct dbq_entry_t *)listc_rtl(&q_reqs);
             thd->iq = 0;
@@ -836,11 +818,6 @@ static int init_ireq(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     }
 
     /* set up request */
-    iq->hascommitlock = 0;
-    iq->should_wait_async = 1; // by defualt we want all requests to be farmed off and acked asynchronously
-    iq->backed_out = 0;
-
-    iq->num_reqs = 0;
     const size_t len = sizeof(*iq) - offsetof(struct ireq, region3);
     bzero(&iq->region3, len);
 

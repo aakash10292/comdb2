@@ -601,15 +601,15 @@ static const char *sync_to_str(int sync)
     }
 }
 
-static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
+//making below function non static to be used in sltdbt.c
+int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
                                      struct ireq *iq, char *source_node,
                                      int timeoutms, int adaptive,
-                                     db_seqnum_type *ss,int *is_wait_async)
+                                     db_seqnum_type *ss)
 {
     int rc = 0;
     int sync;
     int start_ms, end_ms;
-    int enqueued = 0;
 
     if (iq->sc_pending) {
         sync = REP_SYNC_FULL;
@@ -649,49 +649,28 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
 
     case REP_SYNC_FULL:
         iq->gluewhere = "bdb_wait_for_seqnum_from_all";
-        extern int gbl_seqnum_wait_init_success;
-        printf("gbl_seqnum_wait_init_success: %d\niq->should_wait_async: %d\n", gbl_seqnum_wait_init_success, iq->should_wait_async);
-        if(gbl_seqnum_wait_init_success && iq->should_wait_async){
-            if (adaptive){
-                iq->timeoutms = -1;
-                enqueued = add_to_seqnum_wait_queue(iq, (seqnum_type *)ss, &iq->timeoutms, iq->txnsize,1,is_wait_async); 
-            }
-            else if (timeoutms == -1){
-                int timeoutms = ((bdb_state_type *)bdb_handle)->attr->reptimeout * MILLISEC;
-                enqueued = add_to_seqnum_wait_queue(iq, (seqnum_type *)ss, &timeoutms, 0,0,is_wait_async); 
-            }
-            else{
-                enqueued = add_to_seqnum_wait_queue(iq, (seqnum_type *)ss, &timeoutms, 0,0,is_wait_async); 
-            }
-        }
         
-        if(!enqueued){
-            // We could not enqueue on to seqnum_wait_queue. Resorting to sequential wait_for_seqnum
-            if (adaptive)
-                rc = bdb_wait_for_seqnum_from_all_adaptive_newcoh(
-                    bdb_handle, (seqnum_type *)ss, iq->txnsize, &iq->timeoutms);
-            else if (timeoutms == -1)
-                rc = bdb_wait_for_seqnum_from_all(bdb_handle, (seqnum_type *)ss);
-            else
-                rc = bdb_wait_for_seqnum_from_all_timeout(
-                    bdb_handle, (seqnum_type *)ss, timeoutms);
-            iq->gluewhere = "bdb_wait_for_seqnum_from_all done";
-            if (rc != 0) {
-                logmsg(LOGMSG_ERROR, "*WARNING* bdb_wait_seqnum:error syncing all nodes rc %d\n",
-                       rc);
-            }
-            if (iq->sc_pending) {
-                /* TODO: I dont know what to do here. Schema change is already
-                ** commited but one or more replicants didn't get the messages
-                ** to reload table.
-                */
-                logmsg(LOGMSG_INFO, "Schema change scdone sync all nodes, rc %d\n",
-                       rc);
-                rc = 0;
-            }
+        if (adaptive)
+            rc = bdb_wait_for_seqnum_from_all_adaptive_newcoh(
+                bdb_handle, (seqnum_type *)ss, iq->txnsize, &iq->timeoutms);
+        else if (timeoutms == -1)
+            rc = bdb_wait_for_seqnum_from_all(bdb_handle, (seqnum_type *)ss);
+        else
+            rc = bdb_wait_for_seqnum_from_all_timeout(
+                bdb_handle, (seqnum_type *)ss, timeoutms);
+        iq->gluewhere = "bdb_wait_for_seqnum_from_all done";
+        if (rc != 0) {
+            logmsg(LOGMSG_ERROR, "*WARNING* bdb_wait_seqnum:error syncing all nodes rc %d\n",
+                   rc);
         }
-        else{
-            rc = BDBERR_NOERROR; // Since we have farmed-off the wait, we return no error here (Errors will be handled in separate asynchronous thread).
+        if (iq->sc_pending) {
+            /* TODO: I dont know what to do here. Schema change is already
+            ** commited but one or more replicants didn't get the messages
+            ** to reload table.
+            */
+            logmsg(LOGMSG_INFO, "Schema change scdone sync all nodes, rc %d\n",
+                   rc);
+            rc = 0;
         }
 
         break;
@@ -712,7 +691,7 @@ static int trans_wait_for_seqnum_int(void *bdb_handle, struct dbenv *dbenv,
         break;
     }
 
-    if ((is_wait_async==NULL || *(is_wait_async)==0) && bdb_attr_get(dbenv->bdb_attr, BDB_ATTR_COHERENCY_LEASE)) {
+    if (bdb_attr_get(dbenv->bdb_attr, BDB_ATTR_COHERENCY_LEASE)) {
         uint64_t now = gettimeofday_ms(), next_commit = next_commit_timestamp();
         if (next_commit > now)
             poll(0, 0, next_commit - now);
@@ -730,7 +709,7 @@ int trans_wait_for_seqnum(struct ireq *iq, char *source_host,
     void *bdb_handle = bdb_handle_from_ireq(iq);
     struct dbenv *dbenv = dbenv_from_ireq(iq);
     return trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, source_host, -1,
-                                     0 /*adaptive*/, ss,NULL);
+                                     0 /*adaptive*/, ss);
 }
 
 int trans_wait_for_last_seqnum(struct ireq *iq, char *source_host)
@@ -742,7 +721,7 @@ int trans_wait_for_last_seqnum(struct ireq *iq, char *source_host)
 
     if (bdb_get_myseqnum(bdb_handle, (void *)&seqnum)) {
         rc = trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, source_host, -1,
-                                       0 /*adaptive*/, &seqnum,NULL);
+                                       0 /*adaptive*/, &seqnum);
     }
     return rc;
 }
@@ -759,7 +738,7 @@ int trans_commit_logical_tran(void *trans, int *bdberr)
 static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
                             int timeoutms, int adaptive, int logical,
                             void *blkseq, int blklen, void *blkkey,
-                            int blkkeylen, int *is_wait_async)
+                            int blkkeylen)
 {
     int rc;
     db_seqnum_type *ss;
@@ -767,13 +746,13 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
     int cn_len;
     void *bdb_handle = bdb_handle_from_ireq(iq);
     struct dbenv *dbenv = dbenv_from_ireq(iq);
+    extern int gbl_seqnum_wait_init_success;
     ss = (db_seqnum_type *)malloc(sizeof(db_seqnum_type));
     //memset(&ss, -1, sizeof(ss));
     memset(ss, -1, sizeof(db_seqnum_type));
 
     rc = trans_commit_seqnum_int(bdb_handle, dbenv, iq, trans, ss, logical,
                                  blkseq, blklen, blkkey, blkkeylen);
-
     if (gbl_extended_sql_debug_trace && iq->have_snap_info) {
         cn_len = iq->snap_info.keylen;
         cnonce = alloca(cn_len + 1);
@@ -782,21 +761,24 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
         logmsg(LOGMSG_USER, "%s %s line %d: trans_commit returns %d\n", cnonce,
                __func__, __LINE__, rc);
     }
-
-    if (rc != 0) {
+    // If trans_commit_seqnum_int above returned error, then we don't wait for distributed commit. 
+    // Also, if durable_lsn is not enabled, then we don't wait for distributed commit here. 
+    if (rc != 0 || (iq->sorese.type && !(((bdb_state_type *)bdb_handle)->attr->durable_lsns) && gbl_seqnum_wait_init_success)) {
+        //grab a pointer to ss, we need it for distributed commit later on
+        iq->commit_seqnum = ss;
         return rc;
     }
-
     rc = trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, source_host,
-                                   timeoutms, adaptive, ss, is_wait_async);
+                                   timeoutms, adaptive, ss);
 
-    if ((is_wait_async==NULL || *(is_wait_async)==0) && cnonce) {
+    if (cnonce) {
         DB_LSN *lsn = (DB_LSN *)ss;
         logmsg(LOGMSG_USER,
                "%s %s line %d: wait_for_seqnum [%d][%d] returns %d\n", cnonce,
                __func__, __LINE__, lsn->file, lsn->offset, rc);
     }
-
+    // We finished distributed commit here. We no longer need the commit seqnum. Freeing it here.. 
+    free(ss);
     return rc;
 }
 
@@ -805,25 +787,25 @@ int trans_commit_logical(struct ireq *iq, void *trans, char *source_host,
                          void *blkkey, int blkkeylen)
 {
     return trans_commit_int(iq, trans, source_host, timeoutms, adaptive, 1,
-                            blkseq, blklen, blkkey, blkkeylen,NULL);
+                            blkseq, blklen, blkkey, blkkeylen);
 }
 
 /* XXX i made this be the same as trans_commit_adaptive */
 int trans_commit(struct ireq *iq, void *trans, char *source_host)
 {
-    return trans_commit_int(iq, trans, source_host, -1, 1, 0, NULL, 0, NULL, 0,NULL);
+    return trans_commit_int(iq, trans, source_host, -1, 1, 0, NULL, 0, NULL, 0);
 }
 
 int trans_commit_timeout(struct ireq *iq, void *trans, char *source_host,
                          int timeoutms)
 {
     return trans_commit_int(iq, trans, source_host, timeoutms, 0, 0, NULL, 0,
-                            NULL, 0,NULL);
+                            NULL, 0);
 }
 
-int trans_commit_adaptive(struct ireq *iq, void *trans, char *source_host, int *is_wait_async)
+int trans_commit_adaptive(struct ireq *iq, void *trans, char *source_host)
 {
-    return trans_commit_int(iq, trans, source_host, -1, 1, 0, NULL, 0, NULL, 0,is_wait_async);
+    return trans_commit_int(iq, trans, source_host, -1, 1, 0, NULL, 0, NULL, 0);
 }
 
 int trans_abort_logical(struct ireq *iq, void *trans, void *blkseq, int blklen,
@@ -851,9 +833,8 @@ int trans_abort_logical(struct ireq *iq, void *trans, void *blkseq, int blklen,
     /* Single phy-txn logical aborts will set ss to 0: check before waiting */
     u_int32_t *file = (u_int32_t *)&ss;
     if (*file != 0) {
-        iq->should_wait_async = 0;
         trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, gbl_mynode,
-                                  -1 /* timeoutms */, 1 /* adaptive */, &ss,NULL);
+                                  -1 /* timeoutms */, 1 /* adaptive */, &ss);
     }
     return rc;
 }
