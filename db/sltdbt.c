@@ -312,6 +312,7 @@ int handle_ireq(struct ireq *iq)
         int enqueued = 0;
 
         if (iq->sorese.type) {
+            // For now we intend to support asynchronous distributed commit only for sorese type 
             bdb_state_type *bdb_handle = (bdb_state_type *)bdb_handle_from_ireq(iq);
             struct dbenv *dbenv = (struct dbenv *)dbenv_from_ireq(iq);
             extern int gbl_seqnum_wait_init_success;

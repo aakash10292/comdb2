@@ -129,7 +129,8 @@ enum { REP_TYPE_BERKDB_REP_BUF_HDR_LEN = 4 + 4 };
 BB_COMPILE_TIME_ASSERT(rep_type_berkdb_rep_buf_hdr,
                        sizeof(struct rep_type_berkdb_rep_buf_hdr) ==
                            REP_TYPE_BERKDB_REP_BUF_HDR_LEN);
-
+pthread_mutex_t max_lsn_so_far_lk = PTHREAD_MUTEX_INITIALIZER;
+DB_LSN max_lsn_so_far = { .file = 0, .offset = 0};
 static uint8_t *rep_type_berkdb_rep_buf_hdr_put(
     const struct rep_type_berkdb_rep_buf_hdr *p_rep_type_berkdb_rep_buf_hdr,
     uint8_t *p_buf, const uint8_t *p_buf_end)
@@ -2404,6 +2405,17 @@ static inline int should_copy_seqnum(bdb_state_type *bdb_state, seqnum_type *seq
     return 1;
 }
 
+// assumes max_lsn_so_far_lk is held
+void set_max_lsn(DB_LSN *cur_max, DB_LSN *candidate){
+    if(log_compare(candidate, cur_max) > 0){
+        logmsg(LOGMSG_USER, "Changing max_lsn\n");
+        cur_max->file = candidate->file;
+        cur_max->offset = candidate->offset;
+        return;
+    }
+    logmsg(LOGMSG_USER,"max_lsn unchanged\n");
+}
+
 static void got_new_seqnum_from_node(bdb_state_type *bdb_state,
                                      seqnum_type *seqnum, const char *host,
                                      uint8_t is_tcp)
@@ -2629,6 +2641,10 @@ static void got_new_seqnum_from_node(bdb_state_type *bdb_state,
     if (seqnum->lsn.file == INT_MAX)
         return;
 
+    // set the max_lsn_so_far
+    Pthread_mutex_lock(&max_lsn_so_far_lk);
+    set_max_lsn(&max_lsn_so_far,&seqnum->lsn);
+    Pthread_mutex_unlock(&max_lsn_so_far_lk);
     /* wake up anyone who might be waiting to see this seqnum */
     Pthread_cond_broadcast(&(bdb_state->seqnum_info->cond));
 

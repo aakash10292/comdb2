@@ -9,20 +9,25 @@
 #include "comdb2.h"
 #include <mem.h>
 #include<errstat.h>
+
+/* 
+ * WORK QUEUE 
+ * work_queue -> A queue abstraction encapsulating lists and locks used
+ * seqnum_wait_queue_pool -> A mempool from which work items are allocated
+ * seqnum_wait_queue_pool_lk -> Lock guarding the mempool. We need a lock because more than one block processor thread could try to enqueue a work item
+ * */
 seqnum_wait_queue *work_queue = NULL;
 static pool_t *seqnum_wait_queue_pool = NULL;
 static pthread_mutex_t seqnum_wait_queue_pool_lk;
-pthread_mutex_t max_lsn_lk;
-int max_lsn;
+extern pthread_mutex_t max_lsn_so_far_lk;
+extern DB_LSN max_lsn_so_far;
 extern uint64_t coherency_commit_timestamp;
-extern pthread_rwlock_t commit_lock;
 extern struct dbenv *thedb;
 extern pool_t *p_reqs;
 extern void (*comdb2_ipc_sndbak_len_sinfo)(struct ireq *, int);
 extern int gbl_print_deadlock_cycles;
 extern int last_slow_node_check_time;
 extern __thread snap_uid_t *osql_snap_info;
-//extern pthread_mutex_t lock;
 void *queue_processor(void *);  
 void destroy_ireq(struct dbenv *dbenv, struct ireq *iq);
 
@@ -98,9 +103,6 @@ int seqnum_wait_gbl_mem_init(){
     Pthread_create(&dummy_tid, &attr, queue_processor, NULL);
     // Allocate the mem pool
     seqnum_wait_queue_pool = pool_setalloc_init(sizeof(struct seqnum_wait), 0, malloc, free);
-
-    Pthread_mutex_init(&max_lsn_lk, NULL);
-    max_lsn = 0;
     return 0;
 }
 
@@ -131,6 +133,7 @@ void print_lists(){
     //printf("unlocking at %d: \n",__LINE__);
     //pthread_mutex_unlock(&(work_queue->mutex));
 }
+
 // Assumes that we already have lock on work_queue->mutex
 void add_to_lsn_list(struct seqnum_wait *item){
     struct seqnum_wait *add_before_lsn = NULL;
@@ -615,6 +618,14 @@ void *queue_processor(void *arg){
             item = LISTC_TOP(&(work_queue->lsn_list));
             Pthread_mutex_unlock(&(work_queue->mutex));
             while(item!=NULL){
+                Pthread_mutex_lock(&max_lsn_so_far_lk);
+                if(log_compare(&item->seqnum.lsn, &max_lsn_so_far) > 0){
+                    // We don't need to go down the lsn list any more as the remaining work_items are for Larger LSNs
+                    logmsg(LOGMSG_USER, "Current item LSN larger than max_so_far.. Quit processing LSN list\n");
+                    Pthread_mutex_unlock(&max_lsn_so_far_lk);
+                    break;
+                }
+                Pthread_mutex_unlock(&max_lsn_so_far_lk);
                 if(item->cur_state == FREE){
                     logmsg(LOGMSG_DEBUG, "+++Done processing work item: %d:%d... Freeing it\n",item->seqnum.lsn.file, item->seqnum.lsn.offset);
                     Pthread_mutex_lock(&(work_queue->mutex));
@@ -664,7 +675,7 @@ void seqnum_wait_cleanup(){
     struct seqnum_wait *item = NULL;
 
     //FREE THE WORK QUEUE
-    pthread_mutex_lock(&work_queue->mutex);
+    Pthread_mutex_lock(&work_queue->mutex);
     LISTC_FOR_EACH(&work_queue->absolute_ts_list,item,absolute_ts_lnk)
     {
         free(listc_rfl(&work_queue->absolute_ts_list, item));
@@ -676,10 +687,14 @@ void seqnum_wait_cleanup(){
     }
     //listc_free(&work_queue->absolute_ts_list);
     //listc_free(&work_queue->lsn_list);
-    pthread_mutex_unlock(&work_queue->mutex);
-    free(work_queue);
+    Pthread_mutex_unlock(&work_queue->mutex);
+    Pthread_mutex_destroy(&work_queue->mutex);
+    Pthread_cond_destroy(&work_queue->cond);
+    if(work_queue!=NULL)
+        free(work_queue);
     // FREE THE MEM POOL
-    pthread_mutex_lock(&seqnum_wait_queue_pool_lk);
+    Pthread_mutex_lock(&seqnum_wait_queue_pool_lk);
     pool_free(seqnum_wait_queue_pool);
-    pthread_mutex_unlock(&seqnum_wait_queue_pool_lk);
+    Pthread_mutex_unlock(&seqnum_wait_queue_pool_lk);
+    Pthread_mutex_destroy(&seqnum_wait_queue_pool_lk);
 }
