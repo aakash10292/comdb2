@@ -30,7 +30,7 @@ extern int last_slow_node_check_time;
 extern __thread snap_uid_t *osql_snap_info;
 void *queue_processor(void *);  
 void destroy_ireq(struct dbenv *dbenv, struct ireq *iq);
-
+extern int gbl_async_dist_commit_max_outstanding_trans;
 
 void osql_postcommit_handle(struct ireq *);
 void handle_postcommit_bpfunc(struct ireq *);
@@ -83,7 +83,6 @@ static int deallocate_seqnum_wait(struct seqnum_wait *item){
 }
 
 int seqnum_wait_gbl_mem_init(){
-    //return -1;
     work_queue = (seqnum_wait_queue *)malloc(sizeof(seqnum_wait_queue));
     if(work_queue == NULL){
         return -1;
@@ -91,8 +90,8 @@ int seqnum_wait_gbl_mem_init(){
     work_queue->next_commit_timestamp = 0;
     listc_init(&work_queue->lsn_list, offsetof(struct seqnum_wait, lsn_lnk));
     listc_init(&work_queue->absolute_ts_list, offsetof(struct seqnum_wait, absolute_ts_lnk));
-    pthread_mutex_init(&(work_queue->mutex), NULL);
-    pthread_cond_init(&(work_queue->cond), NULL);
+    Pthread_mutex_init(&(work_queue->mutex), NULL);
+    Pthread_cond_init(&(work_queue->cond), NULL);
     
     pthread_t dummy_tid;
     pthread_attr_t attr;
@@ -172,9 +171,15 @@ void add_to_absolute_ts_list(struct seqnum_wait *item){
 
 
 int add_to_seqnum_wait_queue(bdb_state_type* bdb_state, seqnum_type *seqnum,struct dbenv *dbenv,sorese_info_t *sorese, errstat_t *errstat,int rc){
+    Pthread_mutex_lock(&(work_queue->mutex));
+    if(listc_size(&work_queue->lsn_list) >= gbl_async_dist_commit_max_outstanding_trans){
+        Pthread_mutex_unlock(&work_queue->mutex);
+        return 0;
+    }
     struct seqnum_wait *swait = allocate_seqnum_wait();
     if(swait==NULL){
         // Could not allocate memory...  return 0 here to relapse to waiting inline
+        Pthread_mutex_unlock(&work_queue->mutex);
         return 0; 
     }
     swait->cur_state = INIT;
@@ -198,12 +203,10 @@ int add_to_seqnum_wait_queue(bdb_state_type* bdb_state, seqnum_type *seqnum,stru
     memcpy(&swait->sorese,sorese, sizeof(sorese_info_t));
     memcpy(&swait->errstat,errstat, sizeof(errstat_t));
 
-    Pthread_mutex_lock(&(work_queue->mutex));
     // Add to the lsn list in increasing order of LSN 
     add_to_lsn_list(swait);
     // Add to absolute_ts_list in increasing order of next_ts
     add_to_absolute_ts_list(swait);
-    work_queue->size += 1;
     Pthread_cond_signal(&(work_queue->cond));
     Pthread_mutex_unlock(&(work_queue->mutex));
     // Signal seqnum_cond as the worker might be waiting on this condition.. 

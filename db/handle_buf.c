@@ -870,6 +870,7 @@ static int init_ireq_legacy(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     iq->cost = 0;
     iq->sorese.osqllog = NULL;
     iq->luxref = luxref;
+    iq->should_enqueue = 0;
 
     if (iq->is_fromsocket) {
         if (iq->frommach == gbl_mynode)

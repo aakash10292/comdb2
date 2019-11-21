@@ -309,22 +309,23 @@ int handle_ireq(struct ireq *iq)
         /* pack data at tail of reply */
         pack_tail(iq);
         int enqueued = 0;
-
         if (iq->sorese.type) {
-            // For now we intend to support asynchronous distributed commit only for sorese type 
             bdb_state_type *bdb_handle = (bdb_state_type *)bdb_handle_from_ireq(iq);
             struct dbenv *dbenv = (struct dbenv *)dbenv_from_ireq(iq);
-            extern int gbl_seqnum_wait_init_success;
-            if(gbl_seqnum_wait_init_success && !(bdb_handle->attr->durable_lsns)){
+            // For now we intend to support asynchronous distributed commit only for sorese type AND if durable lsns are not enabled
+            if(iq->should_enqueue){ 
                 enqueued = add_to_seqnum_wait_queue(bdb_handle, (seqnum_type *)iq->commit_seqnum, dbenv, &iq->sorese,&iq->errstat,rc);
-            }
-            if(!enqueued){
-              // We couldn't farm off distributed commit. So we do it here
-               rc = trans_wait_for_seqnum_int(bdb_handle,dbenv, iq,gbl_mynode,-1,1,iq->commit_seqnum);
+                if(enqueued){
+                    free(iq->commit_seqnum);
+                    goto cleanup;
+                }
+                // We didn't farm off distributed commit. So we do it here
+                rc = trans_wait_for_seqnum_int(bdb_handle,dbenv, iq,gbl_mynode,-1,1,iq->commit_seqnum);
                //We can free commit_seqnum here as :
                //1.) We haven't farmed off for distributed commit.
                //2.) We have performed distributed commit in line , and no longer need the commit_seqnum.
                free(iq->commit_seqnum);
+            }
                
                 if (rc && (!iq->sorese.rcout || rc == ERR_NOT_DURABLE))
                     iq->sorese.rcout = rc;
@@ -355,7 +356,9 @@ int handle_ireq(struct ireq *iq)
                 osql_comm_signal_sqlthr_rc(&iq->sorese, &iq->errstat, sorese_rc);
 
                 iq->timings.req_sentrc = osql_log_time();
-           }
+               
+                
+            
 
 #if 0
             /*
@@ -417,7 +420,7 @@ int handle_ireq(struct ireq *iq)
         } else if (comdb2_ipc_sndbak_len_sinfo) {
             comdb2_ipc_sndbak_len_sinfo(iq, rc);
         }
-    
+cleanup:
 
         /* Unblock anybody waiting for stuff that was added in this transaction. */
         clear_trans_from_repl_list(iq->repl_list);

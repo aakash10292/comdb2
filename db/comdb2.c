@@ -775,7 +775,8 @@ int64_t gbl_temptable_spills;
 int gbl_osql_odh_blob = 1;
 
 int gbl_clean_exit_on_sigterm = 1;
-
+int gbl_async_dist_commit = 0;
+int gbl_async_dist_commit_max_outstanding_trans = 8;
 comdb2_tunables *gbl_tunables; /* All registered tunables */
 int init_gbl_tunables();
 int free_gbl_tunables();
@@ -3995,10 +3996,12 @@ static int init(int argc, char **argv)
     load_dbstore_tableversion(thedb, NULL);
 
     // Setting up async seqnum_wait 
-    rc = seqnum_wait_gbl_mem_init();
-    if(rc){
-        gbl_seqnum_wait_init_success = 0;
-        logmsg(LOGMSG_ERROR, "Error while initialising seqnum_wait... Waiting for seqnums will happen sequentially %d\n", rc);
+    if(gbl_async_dist_commit){
+        rc = seqnum_wait_gbl_mem_init();
+        if(rc){
+            logmsg(LOGMSG_ERROR, "Error while initialising seqnum_wait... Waiting for seqnums will happen sequentially %d\n", rc);
+            abort(); 
+        }
     }
     gbl_backend_opened = 1;
     unlock_schema_lk();
