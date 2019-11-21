@@ -774,7 +774,7 @@ int64_t gbl_temptable_spills;
 int gbl_osql_odh_blob = 1;
 
 int gbl_clean_exit_on_sigterm = 1;
-int gbl_async_dist_commit = 0;
+int gbl_async_dist_commit = 1;
 int gbl_async_dist_commit_max_outstanding_trans = 8;
 comdb2_tunables *gbl_tunables; /* All registered tunables */
 int init_gbl_tunables();
