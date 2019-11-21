@@ -745,7 +745,7 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
     int cn_len;
     void *bdb_handle = bdb_handle_from_ireq(iq);
     struct dbenv *dbenv = dbenv_from_ireq(iq);
-    extern int gbl_seqnum_wait_init_success;
+    extern int gbl_async_dist_commit;
     ss = (db_seqnum_type *)malloc(sizeof(db_seqnum_type));
     //memset(&ss, -1, sizeof(ss));
     memset(ss, -1, sizeof(db_seqnum_type));
@@ -760,13 +760,22 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
         logmsg(LOGMSG_USER, "%s %s line %d: trans_commit returns %d\n", cnonce,
                __func__, __LINE__, rc);
     }
-    // If trans_commit_seqnum_int above returned error, then we don't wait for distributed commit. 
-    // Also, if durable_lsn is not enabled, then we don't wait for distributed commit here. 
-    if (rc != 0 || (iq->sorese.type && !(((bdb_state_type *)bdb_handle)->attr->durable_lsns) && gbl_seqnum_wait_init_success)) {
-        //grab a pointer to ss, we need it for distributed commit later on
-        iq->commit_seqnum = ss;
+    if (rc != 0) {
         return rc;
     }
+
+    /*
+     * If gbl_async_dist_commits is on, AND
+     * If request is sorese_type , AND
+     * If durable_lsns are not enabled, then we return... Distributed commit happens later.
+     */
+    if(gbl_async_dist_commit && iq->sorese.type && !((bdb_state_type *)bdb_handle)->attr->durable_lsns){
+        //grab a pointer to ss and return rc
+        iq->commit_seqnum = ss;
+        iq->should_enqueue = 1;
+        return rc;
+    }
+
     rc = trans_wait_for_seqnum_int(bdb_handle, dbenv, iq, source_host,
                                    timeoutms, adaptive, ss);
 

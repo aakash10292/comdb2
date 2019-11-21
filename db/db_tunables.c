@@ -325,7 +325,8 @@ extern int gbl_debug_omit_idx_write;
 extern int gbl_debug_omit_blob_write;
 extern int gbl_debug_skip_constraintscheck_on_insert;
 extern int eventlog_nkeep;
-
+extern int gbl_async_dist_commit;
+extern int gbl_async_dist_commit_max_outstanding_trans;
 int gbl_page_order_table_scan = 0;
 size_t gbl_cached_output_buffer_max_bytes = 8 * 1024 * 1024; /* 8 MiB */
 

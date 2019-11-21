@@ -883,6 +883,7 @@ static int init_ireq(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     iq->cost = 0;
     iq->sorese.osqllog = NULL;
     iq->luxref = luxref;
+    iq->should_enqueue = 0;
 
 #if 0
     Pulled this one out of init_req, it only adds to the confusion
