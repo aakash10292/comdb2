@@ -24,19 +24,10 @@ extern DB_LSN max_lsn_so_far;
 extern uint64_t coherency_commit_timestamp;
 extern struct dbenv *thedb;
 extern pool_t *p_reqs;
-extern void (*comdb2_ipc_sndbak_len_sinfo)(struct ireq *, int);
-extern int gbl_print_deadlock_cycles;
 extern int last_slow_node_check_time;
-extern __thread snap_uid_t *osql_snap_info;
 void *queue_processor(void *);  
-void destroy_ireq(struct dbenv *dbenv, struct ireq *iq);
 extern int gbl_async_dist_commit_max_outstanding_trans;
 
-void osql_postcommit_handle(struct ireq *);
-void handle_postcommit_bpfunc(struct ireq *);
-void osql_postabort_handle(struct ireq *);
-void handle_postabort_bpfunc(struct ireq *);
-int bdb_wait_for_seqnum_from_all_int(bdb_state_type *bdb_state,seqnum_type *seqnum, int *timeoutms,uint64_t txnsize, int newcoh);
 int bdb_track_replication_time(bdb_state_type *bdb_state, seqnum_type *seqnum, const char *host);
 
 void bdb_slow_replicant_check(bdb_state_type *bdb_state,
@@ -54,17 +45,6 @@ int nodeix(const char *node);
 void set_coherent_state(bdb_state_type *bdb_state,
                                       const char *hostname, int state,
                                       const char *func, int line);
-void calculate_durable_lsn(bdb_state_type *bdb_state, DB_LSN *dlsn,
-                                  uint32_t *gen, uint32_t flags);
-unsigned long long osql_log_time(void);
-void block_state_free(block_state_t *p_blkstate);
-int reqlog_logl(struct reqlogger *logger, unsigned event_flag, const char *s);
-void pack_tail(struct ireq *iq);
-
-void *bdb_handle_from_ireq(const struct ireq *iq);
-struct dbenv *dbenv_from_ireq(const struct ireq *iq);
-
-
 
 static struct seqnum_wait *allocate_seqnum_wait(void){
     struct seqnum_wait *s;
@@ -148,7 +128,6 @@ void add_to_lsn_list(struct seqnum_wait *item){
     
         // The new LSN is the highest yet... Adding to end of lsn list
     listc_abl(&(work_queue->lsn_list), item);
-    print_lists();
 }
 
 // Assumes that we already have lock on work_queue->mutex
@@ -166,7 +145,6 @@ void add_to_absolute_ts_list(struct seqnum_wait *item){
 
     // updated next timestamp for this item is the highest yet... Adding to end of absolute_ts_list
     listc_abl(&(work_queue->absolute_ts_list), item);
-    print_lists();
 }
 
 
