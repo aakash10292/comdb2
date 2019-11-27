@@ -149,15 +149,9 @@ void add_to_absolute_ts_list(struct seqnum_wait *item){
 
 
 int add_to_seqnum_wait_queue(bdb_state_type* bdb_state, seqnum_type *seqnum,struct dbenv *dbenv,sorese_info_t *sorese, errstat_t *errstat,int rc){
-    Pthread_mutex_lock(&(work_queue->mutex));
-    if(listc_size(&work_queue->lsn_list) >= gbl_async_dist_commit_max_outstanding_trans){
-        Pthread_mutex_unlock(&work_queue->mutex);
-        return 0;
-    }
     struct seqnum_wait *swait = allocate_seqnum_wait();
     if(swait==NULL){
         // Could not allocate memory...  return 0 here to relapse to waiting inline
-        Pthread_mutex_unlock(&work_queue->mutex);
         return 0; 
     }
     swait->cur_state = INIT;
@@ -180,6 +174,13 @@ int add_to_seqnum_wait_queue(bdb_state_type* bdb_state, seqnum_type *seqnum,stru
     swait->lsn_lnk.prev = NULL;
     memcpy(&swait->sorese,sorese, sizeof(sorese_info_t));
     memcpy(&swait->errstat,errstat, sizeof(errstat_t));
+    Pthread_mutex_lock(&(work_queue->mutex));
+    if(listc_size(&work_queue->lsn_list) >= gbl_async_dist_commit_max_outstanding_trans){
+        Pthread_mutex_unlock(&work_queue->mutex);
+        logmsg(LOGMSG_USER,"could not enqueue for async dist commit as seqnum wait queue at max capacity... waiting in line for distributed commit\n");
+        deallocate_seqnum_wait(swait);
+        return 0;
+    }
 
     // Add to the lsn list in increasing order of LSN 
     add_to_lsn_list(swait);
@@ -222,14 +223,14 @@ void process_work_item(struct seqnum_wait *item){
             if(item->bdb_state->parent)
             item->bdb_state = item->bdb_state->parent;
 
-            /* short circuit if we are waiting on lsn 0:0  */
+            /* short circuit if we are waiting on lsn 0:0  
             if((item->seqnum.lsn.file == 0) && (item->seqnum.lsn.offset == 0))
             {
                 // Do stuff corresponding to rc=0 in bdb_wait_for_seqnum_from_all_int
                 item->outrc = 0;
                 item->cur_state = COMMIT;
                 goto commit_label;
-            }
+            }*/
             logmsg(LOGMSG_DEBUG, "+++%s waiting for %s\n", __func__, lsn_to_str(item->str, &(item->seqnum.lsn)));
             item->start_time = comdb2_time_epochms();
             if(item->bdb_state->attr->durable_lsns){
