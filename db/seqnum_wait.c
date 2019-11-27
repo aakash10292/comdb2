@@ -448,7 +448,7 @@ void process_work_item(struct seqnum_wait *item){
                             logmsg(LOGMSG_DEBUG,
                                    "+++checking for NEWSEQ from node %s of >= <%s> timeout %d\n",
                                    item->nodelist[i], lsn_to_str(item->str, &(item->seqnum.lsn)), item->waitms);
-                        int rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &(item->bdb_state->seqnum_info->seqnums[nodeix(item->bdb_state->repinfo->master_host)]), item->nodelist[i]);
+                        int rc = bdb_wait_for_seqnum_from_node_nowait_int(item->bdb_state, &item->seqnum, item->nodelist[i]);
                         if (bdb_lock_desired(item->bdb_state)) {
                             logmsg(LOGMSG_DEBUG,
                                    "+++%s line %d early exit because lock-is-desired\n", __func__,
