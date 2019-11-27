@@ -131,6 +131,7 @@ BB_COMPILE_TIME_ASSERT(rep_type_berkdb_rep_buf_hdr,
                            REP_TYPE_BERKDB_REP_BUF_HDR_LEN);
 pthread_mutex_t max_lsn_so_far_lk = PTHREAD_MUTEX_INITIALIZER;
 DB_LSN max_lsn_so_far = { .file = 0, .offset = 0};
+uint64_t new_lsns = 0;
 static uint8_t *rep_type_berkdb_rep_buf_hdr_put(
     const struct rep_type_berkdb_rep_buf_hdr *p_rep_type_berkdb_rep_buf_hdr,
     uint8_t *p_buf, const uint8_t *p_buf_end)
@@ -2646,6 +2647,8 @@ static void got_new_seqnum_from_node(bdb_state_type *bdb_state,
     Pthread_mutex_lock(&max_lsn_so_far_lk);
     set_max_lsn(&max_lsn_so_far,&seqnum->lsn);
     Pthread_mutex_unlock(&max_lsn_so_far_lk);
+    // increase new_lsns 
+    new_lsns += 1;
     /* wake up anyone who might be waiting to see this seqnum */
     Pthread_cond_broadcast(&(bdb_state->seqnum_info->cond));
 

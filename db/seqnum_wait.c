@@ -338,7 +338,7 @@ void process_work_item(struct seqnum_wait *item){
                 // If we get here, then none of the replicants have caught up yet, AND we are still within rep_timeout_maxms 
                 // Let's wait for one second and check again.
                 Pthread_mutex_lock(&(work_queue->mutex));
-                item->next_ts = comdb2_time_epochms() + 500;
+                item->next_ts = comdb2_time_epochms() + 50;
                 listc_rfl(&work_queue->absolute_ts_list, item);
                 add_to_absolute_ts_list(item);
                 Pthread_mutex_unlock(&(work_queue->mutex));
@@ -558,6 +558,14 @@ void *queue_processor(void *arg){
     struct timespec waittime;
     int wait_rc = 0;
     int now = 0;
+    extern uint64_t new_lsns;
+    extern bdb_state_type *gbl_bdb_state;
+    int local_new_lsns = 0;
+    Pthread_mutex_lock(&gbl_bdb_state->seqnum_info->lock);
+    local_new_lsns = new_lsns;
+    logmsg(LOGMSG_USER,"+++captured value of local_new_lsns:%d\n", local_new_lsns);
+    Pthread_mutex_unlock(&gbl_bdb_state->seqnum_info->lock);
+
     logmsg(LOGMSG_DEBUG,"+++Starting seqnum_wait worker thread\n");
     while(1){
         Pthread_mutex_lock(&(work_queue->mutex));
@@ -633,9 +641,18 @@ void *queue_processor(void *arg){
             if(now <  item->next_ts){
                 // we are early, wait till the earliest time that a node has to be checked
                 // Or, till we get signalled by got_new_seqnum_from_node
+                Pthread_mutex_lock(&(item->bdb_state->seqnum_info->lock));
+                //Before going into a timed wait check if we've got new lsns in the meanwhile.. In this case, we shouldn't go into a timed wait... we should rather go over the lsn list
+                if(local_new_lsns != new_lsns){
+                    //We got new lsns in the meanwhile... Go over LSN list.
+                    logmsg(LOGMSG_USER,"Not going into timed wait as we got new lsns\n");
+                    Pthread_mutex_unlock(&item->bdb_state->seqnum_info->lock);
+                    local_new_lsns = new_lsns;
+                    wait_rc = 0;
+                    continue;
+                }
                 setup_waittime(&waittime, item->next_ts-now);
                 logmsg(LOGMSG_DEBUG, "+++Current time :%d before earliest time a work item has to be checked:%d ... going into timedcondwait\n",now,item->next_ts);
-                Pthread_mutex_lock(&(item->bdb_state->seqnum_info->lock));
                 wait_rc = pthread_cond_timedwait(&(item->bdb_state->seqnum_info->cond),
                                             &(item->bdb_state->seqnum_info->lock), &waittime); 
                 if(wait_rc !=   ETIMEDOUT)
