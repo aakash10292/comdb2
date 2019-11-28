@@ -166,7 +166,7 @@ int add_to_seqnum_wait_queue(bdb_state_type* bdb_state, seqnum_type *seqnum,stru
     swait->track_once = 1;
     swait->num_successfully_acked = 0;
     swait->lock_desired = 0;
-    swait->next_ts = comdb2_time_epochms();
+    swait->next_ts = swait->end_time = swait->start_time = comdb2_time_epochms();
     swait->absolute_ts_lnk.prev = NULL;
     swait->absolute_ts_lnk.next = NULL;
     swait->outrc = rc;
@@ -338,7 +338,7 @@ void process_work_item(struct seqnum_wait *item){
                 // If we get here, then none of the replicants have caught up yet, AND we are still within rep_timeout_maxms 
                 // Let's wait for one second and check again.
                 Pthread_mutex_lock(&(work_queue->mutex));
-                item->next_ts = comdb2_time_epochms() + 50;
+                item->next_ts = comdb2_time_epochms() + 500;
                 listc_rfl(&work_queue->absolute_ts_list, item);
                 add_to_absolute_ts_list(item);
                 Pthread_mutex_unlock(&(work_queue->mutex));
@@ -426,7 +426,7 @@ void process_work_item(struct seqnum_wait *item){
             else{
                 //If we are still within waitms timeout, we still have hope! 
                 //Modify position of item appropriately in absolute_ts_list
-                if((comdb2_time_epochms() - item->start_time) < item->waitms){
+                if((comdb2_time_epochms() - item->end_time) < item->waitms){
                     // Change position of current work item in absolute_ts_list based on new_ts (the next absolute timestamp that this node has to be worked on again 
                     Pthread_mutex_lock(&(work_queue->mutex));
                     item->next_ts = comdb2_time_epochms() + item->waitms; 
