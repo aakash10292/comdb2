@@ -491,12 +491,6 @@ static void *thd_req(void *vthd)
         thrman_origin(thr_self, getorigin(thd->iq));
         user_request_begin(REQUEST_TYPE_QTRAP, FLAG_REQUEST_TRACK_EVERYTHING);
         handle_ireq(thd->iq);
-        if(thd->iq->is_wait_async){
-            logmsg(LOGMSG_DEBUG, "request farmed off\n");
-        }
-        else{
-            logmsg(LOGMSG_DEBUG, "request processed inline\n");
-        }
         if (debug_this_request(gbl_debug_until) ||
             (gbl_who > 0 && !gbl_sdebug)) {
             struct per_request_stats *st;

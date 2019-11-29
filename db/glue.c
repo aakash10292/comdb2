@@ -760,6 +760,7 @@ static int trans_commit_int(struct ireq *iq, void *trans, char *source_host,
                __func__, __LINE__, rc);
     }
     if (rc != 0) {
+        free(ss);
         return rc;
     }
 
