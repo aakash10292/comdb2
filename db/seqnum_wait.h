@@ -92,7 +92,6 @@ struct seqnum_wait{
     int we_used;
     const char *base_node;
     char str[80];
-    int track_once;
     DB_LSN nodelsn;
     errstat_t errstat;
     sorese_info_t sorese;
