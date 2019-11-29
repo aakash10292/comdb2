@@ -813,8 +813,6 @@ REGISTER_TUNABLE("nullsort", NULL, TUNABLE_ENUM,
 */
 REGISTER_TUNABLE("num_contexts", NULL, TUNABLE_INTEGER, &gbl_num_contexts,
                  READONLY | NOZERO, NULL, NULL, NULL, NULL);
-REGISTER_TUNABLE("num_qdbs", NULL, TUNABLE_INTEGER, &db->num_qdbs, READONLY,
-                 NULL, NULL, num_qdbs_update, NULL);
 REGISTER_TUNABLE("num_record_converts",
                  "During schema changes, pack this many records into a "
                  "transaction. (Default: 100)",
@@ -1663,11 +1661,6 @@ REGISTER_TUNABLE("physrep_reconnect_penalty",
                  "(Default: 5)",
                  TUNABLE_INTEGER, &gbl_physrep_reconnect_penalty, 0, NULL, NULL,
                  NULL, NULL);
-
-REGISTER_TUNABLE("verbose_physrep",
-                 "Print extended physrep trace.  (Default: off)",
-                 TUNABLE_BOOLEAN, &gbl_verbose_physrep, EXPERIMENTAL | INTERNAL,
-                 NULL, NULL, NULL, NULL);
 
 REGISTER_TUNABLE("physrep_register_interval",
                  "Interval for physical replicant re-registration.  "
