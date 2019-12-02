@@ -57,8 +57,7 @@ enum THD_EV { THD_EV_END = 0, THD_EV_START = 1 };
 
 /* request pool & queue */
 
-// making non-static, to be used in seqnum_wait.c
-pool_t *p_reqs; /* request pool */
+static pool_t *p_reqs; /* request pool */
 
 struct dbq_entry_t {
     LINKC_T(struct dbq_entry_t) qlnk;
@@ -100,7 +99,7 @@ int handle_buf_main(
     void *data_hndl, // handle to data that can be used according to request
                      // type
     int luxref, unsigned long long rqid);
-//removing static, to be used in seqnum_wait.c
+
 static pthread_mutex_t lock;
 pthread_mutex_t buf_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_attr_t attr;
@@ -586,7 +585,6 @@ static void *thd_req(void *vthd)
                         listc_rfl(&rq_reqs, nxtrq);
                     }
                     /* release the memory block of the link */
-                    logmsg(LOGMSG_DEBUG, "%s:%d releasing iq\n",__func__,__LINE__);
                     pool_relablk(pq_reqs, nxtrq);
                 }
                 if (newrqwriter && thd->iq != 0) {
@@ -619,14 +617,32 @@ static void *thd_req(void *vthd)
                             strerror(rc));
                     /* error'd out, so i still have lock: errLOCK(&lock);*/
                 }
-                if (newrqwriter && thd->iq != 0) {
-                    write_thd_count++;
+                if (thd->iq == 0) /*nothing to do. this thread retires.*/
+                {
+                    nretire++;
+                    listc_rfl(&idle, thd);
+                    Pthread_cond_destroy(&thd->wakeup);
+                    thd->tid =
+                        -2; /*returned. this is just for info & debugging*/
+                    pool_relablk(p_thds, thd); /*release this struct*/
+                    /**/
+                    retUNLOCK(&lock);
+                    /**/
+                    /*printf("ending handler %ld\n", pthread_self());*/
+                    delete_constraint_table(thdinfo->ct_add_table);
+                    delete_constraint_table(thdinfo->ct_del_table);
+                    delete_constraint_table(thdinfo->ct_add_index);
+                    delete_defered_index_tbl();
+                    backend_thread_event(dbenv, COMDB2_THR_EVENT_DONE_RDWR);
+                    return 0;
                 }
             }
             thd_coalesce_check_ll();
         }
         UNLOCK(&lock);
 
+        /* Should not be done under lock - might be expensive */
+        truncate_constraint_table(thdinfo->ct_add_table);
         truncate_constraint_table(thdinfo->ct_del_table);
         truncate_constraint_table(thdinfo->ct_add_index);
         truncate_defered_index_tbl();
@@ -864,7 +880,6 @@ static int init_ireq_legacy(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
     iq->cost = 0;
     iq->sorese.osqllog = NULL;
     iq->luxref = luxref;
-    iq->should_enqueue = 0;
 
     if (iq->is_fromsocket) {
         if (iq->frommach == gbl_mynode)
@@ -888,6 +903,7 @@ static int init_ireq_legacy(struct dbenv *dbenv, struct ireq *iq, SBUF2 *sb,
 
     if (iq->frommach == NULL)
         iq->frommach = intern(gbl_mynode);
+
     return 0;
 }
 
