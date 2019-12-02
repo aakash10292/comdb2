@@ -130,6 +130,7 @@ void berk_memp_sync_alarm_ms(int);
 #include "metrics.h"
 #include "time_accounting.h"
 #include <build/db.h>
+#include<seqnum_wait.h>
 #include "comdb2_ruleset.h"
 
 #include<seqnum_wait.h>
