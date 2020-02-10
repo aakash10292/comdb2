@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+bash -n "$0" | exit 1
+
+source ${TESTSROOTDIR}/tools/runit_common.sh
+
+# Debug variable
+debug=0
+tbl=t1
+dbnm=$1
+lrl="${DBDIR}/${dbnm}.lrl"
+
+if [ "x$dbnm" == "x" ] ; then
+    echo "need a DB name"
+    exit 1
+fi
+# Number of records to be added
+nrecs=100
+
+# Below function inserts nrecs number of records into the DB. It retries on failures. 
+
+function insert_records
+{
+    j=0
+    echo "Inserting $nrecs records."
+
+    while [[ $j -lt $nrecs ]]; do 
+        #insert next, if error continue to try again
+	echo "inserting record $j"
+        cdb2sql ${CDB2_OPTIONS} $dbnm default "insert into $tbl(a) values ($j)"  >> insert.out 2>&1
+        if [ $? -ne 0 ] ; then
+            continue
+        fi
+        let j=j+1
+        #assertcnt $tbl $j
+    done
+    echo "Done inserting $nrecs records."
+}
+function create_copy
+{
+	typeset destination=$1
+	typeset filename=$2
+	echo "Creating backup" 
+	$COMDB2AR_EXE c $lrl | lz4 -c stdin > ${destination}/${filename}.lz4
+	echo "Done Creating backup"
+}
+
+function restore_db_from_copy
+{
+	typeset src=$1
+	echo "Restoring DB from copy"
+	lz4 -d stdin stdout < $src | $COMDB2AR_EXE x $DBDIR $DBDIR
+	echo "Done restoring DB from copy"
+	assertcnt $tbl $nrecs
+	do_verify $tbl
+}
+
+echo "Starting test..."
+
+cdb2sql ${CDB2_OPTIONS} $dbnm default "drop table $tbl"
+cdb2sql ${CDB2_OPTIONS} $dbnm default "create table $tbl  { `cat $tbl.csc2 ` }"
+insert_records 
+create_copy "/db/backups" "test"
+restore_db_from_copy "/db/backups/test.lz4" 
+
+exit 0
+
+
