@@ -7,14 +7,14 @@ source ${TESTSROOTDIR}/tools/runit_common.sh
 debug=0
 tbl=t1
 dbnm=$1
-lrl="${DBDIR}/${dbnm}.lrl"
-
-if [ "x$dbnm" == "x" ] ; then
+lrl="${DBDIR}/${DBNAME}.lrl"
+set -x
+if [ "x$DBNAME" == "x" ] ; then
     echo "need a DB name"
     exit 1
 fi
 # Number of records to be added
-nrecs=100
+nrecs=1000
 
 # Below function inserts nrecs number of records into the DB. It retries on failures. 
 
@@ -22,46 +22,84 @@ function insert_records
 {
     j=0
     echo "Inserting $nrecs records."
-
-    while [[ $j -lt $nrecs ]]; do 
+    sum=0
+    time while [[ $j -lt $nrecs ]]; do 
         #insert next, if error continue to try again
-	echo "inserting record $j"
-        cdb2sql ${CDB2_OPTIONS} $dbnm default "insert into $tbl(a) values ($j)"  >> insert.out 2>&1
-        if [ $? -ne 0 ] ; then
-            continue
-        fi
+	#echo "inserting record $j"
+        #time cdb2sql ${CDB2_OPTIONS} $DBNAME default "insert into $tbl(a) values ($j)" | grep ^real | sed -e s/.*m// | awk '{$sum += $1} END {echo $sum}'
+	cdb2sql ${CDB2_OPTIONS} $DBNAME default "insert into $tbl(a) values ($j)" 2>&1
         let j=j+1
-        #assertcnt $tbl $j
     done
     echo "Done inserting $nrecs records."
 }
+
 function create_copy
 {
 	typeset destination=$1
 	typeset filename=$2
+
+	cdb2sql ${CDB2_OPTIONS} $DBNAME default "exec procedure sys.cmd.send(\"flush\")"
 	echo "Creating backup" 
-	$COMDB2AR_EXE c $lrl | lz4 -c stdin > ${destination}/${filename}.lz4
+	$COMDB2AR_EXE c $lrl | lz4 stdin > ${destination}/${filename}.lz4 2>&1
 	echo "Done Creating backup"
+	sleep 5
+	echo "truncating table $tbl"
+        cdb2sql ${CDB2_OPTIONS} $DBNAME default "truncate $tbl"  >> insert.out 2>&1
+	assertcnt $tbl 0
 }
 
-function restore_db_from_copy
+kill_by_pidfile() 
+{
+    pidfile=$1
+    if [[ -f $pidfile ]]; then
+        local pid=$(cat $pidfile)
+        ps -p $pid -o args | grep -q "comdb2 ${DBNAME}"
+        if [[ $? -eq 0 ]]; then
+            echo "kill -9 $pid"
+            kill -9 $pid
+        fi
+        rm -f $pidfile
+    else
+        failexit "kill_by_pidfile: pidfile $pidfile does not exist"
+    fi
+}
+function reset_db_to_baseline
 {
 	typeset src=$1
-	echo "Restoring DB from copy"
-	lz4 -d stdin stdout < $src | $COMDB2AR_EXE x $DBDIR $DBDIR
-	echo "Done restoring DB from copy"
+	typeset delay=$2
+	pushd $DBDIR
+	echo "Reseting DB to baseline"
+	echo "killing DB"
+	kill_by_pidfile ${TMPDIR}/${DBNAME}.pid
+	mv --backup=numbered $TESTDIR/logs/${DBNAME}.db $TESTDIR/logs/${DBNAME}.db.1
+	#sleep $delay 
+	lz4 -d $src | $COMDB2AR_EXE x $DBDIR $DBDIR >> reset.out 2>&1
+	echo "$DBNAME: starting single node"
+	echo "$COMDB2_EXE $DBNAME $TESTDIR/logs/${DBNAME}.db -pidfile ${TMPDIR}/$DBNAME.pid"
+	$COMDB2_EXE $DBNAME >$TESTDIR/logs/${DBNAME}.db -pidfile ${TMPDIR}/$DBNAME.pid 2>&1 &
+	popd
+	sleep $delay
 	assertcnt $tbl $nrecs
 	do_verify $tbl
 }
 
+function update_no_sc
+{
+	j=0
+	while [[ $j -lt $nrecs]]; do
+		cdb2sql ${CDB2_OPTIONS} $DBNAME default "update $tbl set a=$j where a=$j" 2>&1
+	done
+}
+
 echo "Starting test..."
-
-cdb2sql ${CDB2_OPTIONS} $dbnm default "drop table $tbl"
-cdb2sql ${CDB2_OPTIONS} $dbnm default "create table $tbl  { `cat $tbl.csc2 ` }"
-insert_records 
+cdb2sql ${CDB2_OPTIONS} $DBNAME default "drop table $tbl"
+cdb2sql ${CDB2_OPTIONS} $DBNAME default "create table $tbl  { `cat $tbl.csc2 ` }"
+insert_records
+assertcnt $tbl $nrecs
+do_verify $tbl
 create_copy "/db/backups" "test"
-restore_db_from_copy "/db/backups/test.lz4" 
-
+reset_db_to_baseline "/db/backups/test.lz4" 35 
+update_no_sc 
 exit 0
 
 
