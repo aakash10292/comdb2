@@ -1892,4 +1892,8 @@ REGISTER_TUNABLE("cached_output_buffer_max_bytes",
                  "thread.  (Default: 8 MiB)",
                  TUNABLE_INTEGER, &gbl_cached_output_buffer_max_bytes, 0, NULL,
                  NULL, NULL, NULL);
+REGISTER_TUNABLE("pause_schema_change",
+		 "Allow schema change to be paused. (Default: off)",
+		 TUNABLE_BOOLEAN, &gbl_pause_sc, EXPERIMENTAL_INTERNAL,
+		 NULL,NULL, NULL, NULL);
 #endif /* _DB_TUNABLES_H */
