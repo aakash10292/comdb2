@@ -1418,16 +1418,9 @@ int convert_all_records(struct dbtable *from, struct dbtable *to,
         }
 
         s->logical_livesc = 1;
-	extern int gbl_pause_sc;
-	while(gbl_pause_sc){
-		logmsg(LOGMSG_USER,"Schema changes paused\n");
-		sleep(1);
-	}
         Pthread_rwlock_wrlock(&s->db->sc_live_lk);
         s->db->sc_live_logical = 1;
         Pthread_rwlock_unlock(&s->db->sc_live_lk);
-        logmsg(LOGMSG_USER, "[%s] starting thread for logical redo\n",
-                    s->tablename);
         rc = pthread_create(&thdData->tid, &gbl_pthread_attr_detached,
                             (void *(*)(void *))live_sc_logical_redo_thd,
                             thdData);
@@ -1558,6 +1551,13 @@ int convert_all_records(struct dbtable *from, struct dbtable *to,
         free(data.tagmap);
         data.tagmap = NULL;
     }
+
+    // Pause schema change till tunable is set
+	extern int gbl_pause_sc;
+	while(gbl_pause_sc){
+		logmsg(LOGMSG_USER,"Schema changes paused\n");
+		sleep(1);
+	}
 
     if (s->logical_livesc) {
         if (outrc == 0) {
