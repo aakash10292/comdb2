@@ -14,7 +14,7 @@ if [ "x$DBNAME" == "x" ] ; then
     exit 1
 fi
 # Number of records to be added
-nrecs=10000
+nrecs=1000000
 
 # Below function inserts nrecs number of records into the DB. It retries on failures. 
 
@@ -202,7 +202,7 @@ do_verify $tbl
 
 #Create archive .. We will use this as baseline to run all benchmarks against
 #create_copy "/db/backups" "test"
-typeset trans_sizes=(1 10 100 1000 10000)
+typeset trans_sizes=(1 10 100 1000)
 run_tests "${trans_sizes[@]}"
 
 exit 0
