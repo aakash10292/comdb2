@@ -888,6 +888,8 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
 
     // Read the header first
     remsql_hdr hdr = {0};
+    sbuf2setflags(sb, SBUF2_DUMP_READ);
+    logmsg(LOGMSG_USER, "%s:%d reading header \n",__func__,__LINE__);
     rc = sbuf2fread((char *)&hdr,sizeof(hdr),1,sb);
     if(rc!=1){
         logmsg(LOGMSG_USER,"%s:%d failed to read reqmsql header, rc: %d\n", __func__, __LINE__, rc);
@@ -896,7 +898,7 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
     hdr.type = ntohl(hdr.type);
     hdr.size = ntohl(hdr.size);
 
-    logmsg(LOGMSG_USER,"%s:%d remsql_hdr.type:%d remsql_hdr.size:%ld\n",__func__,__LINE__, hdr.type, hdr.size);
+    logmsg(LOGMSG_USER,"%s:%d finished reading header .. remsql_hdr.type:%d remsql_hdr.size:%ld\n",__func__,__LINE__, hdr.type, hdr.size);
     int bytes = hdr.size;
     if(bytes<=0){
         logmsg(LOGMSG_USER,"%s:%d Junk message with %d bytes\n", __func__, __LINE__, bytes);
@@ -1029,35 +1031,35 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
         /*rc = sbuf2fread((char *)&msg->co.flags, 1, sizeof(msg->co.flags), sb);
         if (rc != sizeof(msg->co.flags))
             return -1;*/
-        msg->co.flags = ntohl(remsql_msg->flags);
+        msg->co.flags = remsql_msg->flags;
 
         /*rc = sbuf2fread((char *)&msg->co.rootpage, 1, sizeof(msg->co.rootpage),
                         sb);
         if (rc != sizeof(msg->co.rootpage))
             return -1;*/
-        msg->co.rootpage = ntohl(remsql_msg->rootpage);
+        msg->co.rootpage = remsql_msg->rootpage;
 
         /*rc = sbuf2fread((char *)&msg->co.version, 1, sizeof(msg->co.version),
                         sb);
         if (rc != sizeof(msg->co.version))
             return -1;*/
-        msg->co.version = ntohl(remsql_msg->version);
+        msg->co.version = remsql_msg->version;
 
         /*rc = sbuf2fread((char *)&msg->co.seq, 1, sizeof(msg->co.seq), sb);
         if (rc != sizeof(msg->co.seq))
             return -1;*/
-        msg->co.seq = ntohl(remsql_msg->seq);
+        msg->co.seq = remsql_msg->seq;
 
         /*rc = sbuf2fread((char *)&msg->co.srcpid, 1, sizeof(msg->co.srcpid), sb);
         if (rc != sizeof(msg->co.srcpid))
             return -1;*/
-        msg->co.srcpid = ntohl(remsql_msg->srcpid);
+        msg->co.srcpid = remsql_msg->srcpid;
 
         /*rc = sbuf2fread((char *)&msg->co.srcnamelen, 1,
                         sizeof(msg->co.srcnamelen), sb);
         if (rc != sizeof(msg->co.srcnamelen))
             return -1;*/
-        msg->co.srcnamelen = ntohl(remsql_msg->srcnamelen);
+        msg->co.srcnamelen = remsql_msg->srcnamelen;
 
         if (msg->co.srcnamelen > 0) {
             msg->co.srcname = (char *)malloc(msg->co.srcnamelen);
@@ -1079,7 +1081,7 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
             /*rc = sbuf2fread((char *)&msg->co.ssl, 1, sizeof(msg->co.ssl), sb);
             if (rc != sizeof(msg->co.ssl))
                 return -1;*/
-            msg->co.ssl = ntohl(msg->co.ssl);
+            msg->co.ssl = msg->co.ssl;
             /*fprintf(stderr, "Read ssl %d size %d\n", msg->co.ssl,
              * sizeof(tmp));*/
 
@@ -1136,7 +1138,7 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
             /*rc = sbuf2fread((char *)&tmp, 1, sizeof(tmp), sb);
             if (rc != sizeof(tmp))
                 return FDB_ERR_WRITE_IO;*/
-            msg->cc.seq = htonl(msg->cc.seq);
+            msg->cc.seq = msg->cc.seq;
         } else {
             msg->cc.seq = 0;
         }
@@ -1158,7 +1160,11 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
     case FDB_MSG_DATA_ROW:
         logmsg(LOGMSG_USER,"%s:%d under fdb_msg_data_row\n",__func__, __LINE__);
 
-        msg->dr.cid = remsql_msg->cid;
+        msg->dr.cid = (char *)malloc(idsz);
+        if(!msg->dr.cid){
+            return -1;
+        }
+        memcpy(msg->dr.cid,remsql_msg->cid,idsz);
         /*rc = sbuf2fread(msg->dr.cid, 1, idsz, sb);
         if (rc != idsz)
             return -1;*/
@@ -1166,22 +1172,23 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
         /*rc = sbuf2fread((char *)&msg->dr.rc, 1, sizeof(msg->dr.rc), sb);
         if (rc != sizeof(msg->dr.rc))
             return -1;*/
-        msg->dr.rc = ntohl(remsql_msg->rc);
+        msg->dr.rc = remsql_msg->rc;
 
         msg->dr.genid = remsql_msg->genid;
         /*rc = sbuf2fread((char *)&msg->dr.genid, 1, sizeof(msg->dr.genid), sb);
         if (rc != sizeof(msg->dr.genid))
             return -1;*/
-        msg->dr.genid = flibc_htonll(msg->dr.genid);
-
+        msg->dr.genid = msg->dr.genid;
         msg->dr.datalen = remsql_msg->datalen;
         /*rc = sbuf2fread((char *)&msg->dr.datalen, 1, sizeof(msg->dr.datalen),
                         sb);
         if (rc != sizeof(msg->dr.datalen))
             return -1;*/
-        msg->dr.datalen = ntohl(msg->dr.datalen);
+        logmsg(LOGMSG_USER, "remsql_msg->datalen: %d\n", remsql_msg->datalen);
+        logmsg(LOGMSG_USER," msg len after htonl: %d\n", msg->dr.datalen);
         msg->dr.datalen = (((unsigned)msg->dr.datalen) << 16) +
                           (((unsigned)msg->dr.datalen) >> 16);
+        logmsg(LOGMSG_USER," msg len after bit shifting: %d\n", msg->dr.datalen);
         msg->dr.datacopylen = 0;
 
         if (msg->dr.datalen > 0 || msg->dr.datacopylen > 0) {
@@ -1251,7 +1258,11 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
         /*fprintf(stderr, "%d XYXY calling sbuf2fread %llu\n", __LINE__,
          * osql_log_time());*/
 
-        msg->sq.cid = remsql_msg->cid;
+        msg->sq.cid = (char *)malloc(idsz);
+        if(!msg->sq.cid){
+            return -1;
+        }
+        memcpy(msg->sq.cid,remsql_msg->cid,idsz);
         /*rc = sbuf2fread((char *)msg->sq.cid, 1, idsz, sb);
         if (rc != idsz)
             return -1;*/
@@ -1265,7 +1276,6 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
                         sb);
         if (rc != sizeof(msg->sq.version))
             return -1;*/
-        msg->sq.version = ntohl(msg->sq.version);
         /*fprintf(stderr, "%d XYXY DONE calling sbuf2fread %llu\n", __LINE__,
          * osql_log_time());*/
 
@@ -1275,7 +1285,6 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
         /*rc = sbuf2fread((char *)&msg->sq.flags, 1, sizeof(msg->sq.flags), sb);
         if (rc != sizeof(msg->sq.flags))
             return -1;*/ 
-        msg->sq.flags = ntohl(msg->sq.flags);
         /*fprintf(stderr, "%d XYXY DONE calling sbuf2fread %llu\n", __LINE__,
          * osql_log_time());*/
 
@@ -1285,7 +1294,6 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
         /*rc = sbuf2fread((char *)&msg->sq.sqllen, 1, sizeof(msg->sq.sqllen), sb);
         if (rc != sizeof(msg->sq.sqllen))
             return -1;*/
-        msg->sq.sqllen = ntohl(msg->sq.sqllen);
         /*fprintf(stderr, "%d XYXY DONE calling sbuf2fread %llu\n", __LINE__,
          * osql_log_time());*/
 
@@ -1295,7 +1303,7 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
 
         /*fprintf(stderr, "%d XYXY calling sbuf2fread %llu\n", __LINE__,
          * osql_log_time());*/
-        memcpy(&msg->sq.sql, remsql_msg->sql, msg->sq.sqllen); 
+        memcpy(msg->sq.sql, remsql_msg->sql, msg->sq.sqllen); 
         /*rc = sbuf2fread(msg->sq.sql, 1, msg->sq.sqllen, sb);
         if (rc != msg->sq.sqllen)
             return -1;*/
@@ -1311,7 +1319,6 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
                             sb);
             if (rc != sizeof(msg->sq.keylen))
                 return -1;*/
-            msg->sq.keylen = ntohl(msg->sq.keylen);
             /*fprintf(stderr, "%d XYXY DONE calling sbuf2fread %llu\n",
              * __LINE__, osql_log_time());*/
 
@@ -1322,7 +1329,7 @@ int fdb_msg_read_message(SBUF2 *sb, fdb_msg_t *msg, enum recv_flags flags)
 
                 /*fprintf(stderr, "%d XYXY calling sbuf2fread %llu\n", __LINE__,
                  * osql_log_time());*/
-                memcpy(&msg->sq.key, remsql_msg->key, msg->sq.keylen);
+                memcpy(msg->sq.key, remsql_msg->key, msg->sq.keylen);
                 /*rc = sbuf2fread(msg->sq.key, 1, msg->sq.keylen, sb);
                 if (rc != msg->sq.keylen)
                     return -1;*/
@@ -2001,6 +2008,7 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
     // printf("<<< type %d %s isuuid %d\n", msg->hd.type & FD_MSG_TYPE,
     // fdb_msg_type(msg->hd.type & FD_MSG_TYPE), msg->hd.type &
     // FD_MSG_FLAGS_ISUUID);
+    sbuf2setflags(sb,SBUF2_DUMP_READ);
     CDB2REMSQLMSG remsql_msg = CDB2__REMSQL__MSG__INIT;
     remsql_msg.type = htonl(msg->hd.type);
     //type = htonl(msg->hd.type);
@@ -2019,6 +2027,7 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
         idsz = sizeof(unsigned long long);
 
     send_dk = 0;
+    logmsg(LOGMSG_USER,"%s:%d case is %d\n",__func__, __LINE__,msg->hd.type & FD_MSG_TYPE);
     switch (msg->hd.type & FD_MSG_TYPE) {
     case FDB_MSG_TRAN_BEGIN:
     case FDB_MSG_TRAN_PREPARE:
@@ -2081,44 +2090,38 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
         if (rc != idsz)
             return FDB_ERR_WRITE_IO;*/
 
-        tmp = htonl(msg->co.flags);
         remsql_msg.has_flags = 1;
-        remsql_msg.flags = tmp;
+        remsql_msg.flags = msg->co.flags;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
 
-        tmp = htonl(msg->co.rootpage);
         remsql_msg.has_rootpage = 1;
-        remsql_msg.rootpage = tmp;
+        remsql_msg.rootpage = msg->co.rootpage;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
 
-        tmp = htonl(msg->co.version);
         remsql_msg.has_version = 1;
-        remsql_msg.version = tmp;
+        remsql_msg.version = msg->co.version;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
 
-        tmp = htonl(msg->co.seq);
         remsql_msg.has_seq = 1;
-        remsql_msg.seq = tmp;
+        remsql_msg.seq = msg->co.seq;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
 
-        tmp = htonl(msg->co.srcpid);
         remsql_msg.has_srcpid = 1;
-        remsql_msg.srcpid = tmp;
+        remsql_msg.srcpid = msg->co.srcpid;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
 
-        tmp = htonl(msg->co.srcnamelen);
         remsql_msg.has_srcnamelen = 1;
-        remsql_msg.srcnamelen = tmp;
+        remsql_msg.srcnamelen = msg->co.srcnamelen;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
@@ -2134,9 +2137,8 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
         }*/
 #if WITH_SSL
         if (msg->co.flags & FDB_MSG_CURSOR_OPEN_FLG_SSL) {
-            tmp = htonl(msg->co.ssl);
             remsql_msg.has_ssl = 1;
-            remsql_msg.ssl = tmp;
+            remsql_msg.ssl = msg->co.ssl;
         }
         /*if (msg->co.flags & FDB_MSG_CURSOR_OPEN_FLG_SSL) {
             fprintf(stderr, "Writing ssl %d size %d\n", msg->co.ssl,
@@ -2165,9 +2167,8 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
             haveid = *(unsigned long long *)msg->cc.tid != 0;
 
         if (haveid) {
-            tmp = htonl(msg->cc.seq);
             remsql_msg.has_seq = 1;
-            remsql_msg.seq = tmp;
+            remsql_msg.seq = msg->cc.seq;
             /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
             if (rc != sizeof(tmp))
                 return FDB_ERR_WRITE_IO;*/
@@ -2195,23 +2196,23 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
         if (rc != idsz)
             return FDB_ERR_WRITE_IO;*/
 
-        tmp = htonl(msg->dr.rc);
-        remsql_msg.rc = tmp;
+        remsql_msg.has_rc = 1;
+        remsql_msg.rc = msg->dr.rc;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
 
-        lltmp = flibc_htonll(msg->dr.genid);
-        remsql_msg.genid = lltmp;
+        remsql_msg.has_genid = 1;
+        remsql_msg.genid = msg->dr.genid;
         /*rc = sbuf2fwrite((char *)&lltmp, 1, sizeof(lltmp), sb);
         if (rc != sizeof(lltmp))
             return FDB_ERR_WRITE_IO;*/
-
+        remsql_msg.has_datalen = 1;
         if (unlikely(msg->dr.datacopylen != 0))
             abort();
         tmp = (((unsigned)msg->dr.datalen) << 16) +
               (((unsigned)msg->dr.datalen) >> 16);
-        tmp = htonl(tmp);
+        logmsg(LOGMSG_USER, "%s:%d msg->dr.datalen: %d, tmp before htonl: %d\n",__func__,__LINE__, msg->dr.datalen, tmp);
         remsql_msg.datalen = tmp;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
@@ -2265,9 +2266,8 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
         }
         */
 
-        tmp = htonl(msg->sq.version);
         remsql_msg.has_version = 1;
-        remsql_msg.version = tmp;
+        remsql_msg.version = msg->sq.version;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
@@ -2280,9 +2280,8 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
      }
      */
 
-        tmp = htonl(msg->sq.flags);
         remsql_msg.has_run_sql_flags = 1;
-        remsql_msg.run_sql_flags = tmp;
+        remsql_msg.run_sql_flags = msg->sq.flags;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
@@ -2295,9 +2294,8 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
      }
      */
 
-        tmp = htonl(msg->sq.sqllen); 
         remsql_msg.has_sqllen = 1;
-        remsql_msg.sqllen = tmp;
+        remsql_msg.sqllen = msg->sq.sqllen;
         /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
         if (rc != sizeof(tmp))
             return FDB_ERR_WRITE_IO;*/
@@ -2310,9 +2308,9 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
      }
      */
         remsql_msg.sql = msg->sq.sql;
-        rc = sbuf2fwrite(msg->sq.sql, 1, msg->sq.sqllen, sb);
+        /*rc = sbuf2fwrite(msg->sq.sql, 1, msg->sq.sqllen, sb);
         if (rc != msg->sq.sqllen)
-            return FDB_ERR_WRITE_IO;
+            return FDB_ERR_WRITE_IO;*/
         /*
      rc = sbuf2flush(sb);
      if (rc<=0)
@@ -2323,12 +2321,11 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
      */
 
         if (msg->sq.flags == FDB_RUN_SQL_TRIM) {
-            tmp = htonl(msg->sq.keylen);
             remsql_msg.has_keylen = 1;
-            remsql_msg.keylen = tmp;
-            rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
+            remsql_msg.keylen = msg->sq.keylen;
+            /*rc = sbuf2fwrite((char *)&tmp, 1, sizeof(tmp), sb);
             if (rc != sizeof(tmp))
-                return FDB_ERR_WRITE_IO;
+                return FDB_ERR_WRITE_IO;*/
             /*
          rc = sbuf2flush(sb);
          if (rc<=0)
@@ -2339,9 +2336,9 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
          */
 
             remsql_msg.key = msg->sq.key;
-            rc = sbuf2fwrite(msg->sq.key, 1, msg->sq.keylen, sb);
+            /*rc = sbuf2fwrite(msg->sq.key, 1, msg->sq.keylen, sb);
             if (rc != msg->sq.keylen)
-                return FDB_ERR_WRITE_IO;
+                return FDB_ERR_WRITE_IO;*/
         }
 
         break;
@@ -2621,19 +2618,18 @@ static int fdb_msg_write_message(SBUF2 *sb, fdb_msg_t *msg, int flush)
     // get the length of the packet msg
     int len = cdb2__remsql__msg__get_packed_size(&remsql_msg);
     logmsg(LOGMSG_USER,"%s:%d length of remsql_msg is %d\n",__func__,__LINE__,len);
-    unsigned char *buf;
-    buf = malloc(len+1);
-    cdb2__remsql__msg__pack(&remsql_msg, buf);
     remsql_hdr hdr = {.type = htonl(1),
                         .size = htonl(len)};
-    logmsg(LOGMSG_USER,"%s:%d remsql_hdr.type:%d remsql_hdr.size:%ld\n",__func__, __LINE__, hdr.type, hdr.size);
+    logmsg(LOGMSG_USER,"%s:%d writing header... remsql_hdr.type:%d remsql_hdr.size:%ld\n",__func__, __LINE__, hdr.type, hdr.size);
     rc = sbuf2write((char *)&hdr,sizeof(hdr),sb);
     if(rc != sizeof(hdr)){
         logmsg(LOGMSG_USER,"%s:%d sbuf2write error rc:%d\n",__func__, __LINE__, rc);
-        free(buf);
         return FDB_ERR_WRITE_IO;
     }
 
+    unsigned char *buf;
+    buf = malloc(len);
+    cdb2__remsql__msg__pack(&remsql_msg, buf);
     rc = sbuf2write((char *)buf, len, sb);
     if(rc != len){
         logmsg(LOGMSG_USER,"%s:%d sbuf2write error rc:%d\n",__func__,__LINE__, rc);
@@ -3599,6 +3595,7 @@ static int handle_remsql_session(SBUF2 *sb, struct dbenv *dbenv)
             } else
                 fdb_msg_print_message(sb, &msg, "received msg");
         }
+    logmsg(LOGMSG_USER, "%s:%d message type : %d\n",__func__, __LINE__, msg.hd.type);
 
         rc = callbacks[msg.hd.type](sb, &msg, &arg);
 
