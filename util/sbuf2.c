@@ -274,6 +274,9 @@ int SBUF2_FUNC(sbuf2write)(char *ptr, int nbytes, SBUF2 *sb)
     }
     off = 0;
     left = nbytes;
+    if(sb->flags & SBUF2_DUMP_READ){
+        fsnapf(stdout, ptr, nbytes);
+    }
     while (left > 0) {
         int towrite = 0;
 
