@@ -293,7 +293,7 @@ typedef enum cdb2_event_arg {
 } cdb2_event_arg;
 
 typedef struct cdb2_event cdb2_event;
-
+typedef char Host[64];
 typedef void *(*cdb2_event_callback)(cdb2_hndl_tp *hndl, void *user_arg,
                                      int argc, void **argv);
 
@@ -301,6 +301,8 @@ cdb2_event *cdb2_register_event(cdb2_hndl_tp *hndl, cdb2_event_type types,
                                 cdb2_event_ctrl ctrls, cdb2_event_callback cb,
                                 void *user_arg, int argc, ...);
 int cdb2_unregister_event(cdb2_hndl_tp *hndl, cdb2_event *e);
+Host *hosts_from_handle(cdb2_hndl_tp *);
+int num_hosts_from_handle(cdb2_hndl_tp *);
 #if defined __cplusplus
 }
 #endif

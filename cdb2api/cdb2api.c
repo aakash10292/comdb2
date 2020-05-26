@@ -1045,6 +1045,14 @@ struct cdb2_hndl {
     ProtobufCAllocator allocator;
 };
 
+Host *hosts_from_handle(cdb2_hndl_tp *hndl){
+    return hndl->hosts;
+}
+
+int num_hosts_from_handle(cdb2_hndl_tp *hndl){
+    return hndl->num_hosts;
+}
+
 static void *cdb2_protobuf_alloc(void *allocator_data, size_t size)
 {
     struct cdb2_hndl *hndl = allocator_data;
