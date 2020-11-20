@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+bash -n "$0" | exit 1
+source ${TESTSROOTDIR}/tools/runit_common.sh
+
+set -e
+set -x
+
+dbnm=$1
+
+if [ "x$dbnm" == "x" ] ; then
+    echo "need a DB name"
+    exit 1
+fi
+
+
+
+echo "create t1"
+cdb2sql ${CDB2_OPTIONS} $dbnm default "create table t1 (a int) "
+MAX=100000
+
+
+
+for ((i=0;i<10;i++)) ; do 
+    cdb2sql ${CDB2_OPTIONS} $dbnm default "insert into t1(a) values($i)"
+done
+
+THRDS=1
+CNT=1
+ITERATIONS=1
+TABLE=t1
+time ${TESTSBUILDDIR}/parallel_readers $dbnm $TABLE $THRDS $CNT $ITERATIONS > select.out
+
+echo "Success"
+
+

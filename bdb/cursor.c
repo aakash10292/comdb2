@@ -98,7 +98,7 @@ as long as there was a successful move in the past
 
 #include "genid.h"
 
-//#define MERGE_DEBUG 1
+#define MERGE_DEBUG 1
 
 struct datacopy_info {
     void *datacopy;
@@ -613,7 +613,8 @@ bdb_cursor_ifn_t *bdb_cursor_open(
 
     cur->upd_shadows_count = 0;
 
-    cur->trak = trak | ((shadow_tran) ? shadow_tran->trak : 0);
+    //cur->trak = trak | ((shadow_tran) ? shadow_tran->trak : 0);
+    cur->trak = 1;
 
     if (cur->trak && shadow_tran) {
         logmsg(LOGMSG_USER, "Cur %p opened as tranclass %d startgenid %llx\n", cur,
@@ -4174,6 +4175,9 @@ static int bdb_switch_stripe(bdb_cursor_impl_t *cur, int dtafile, int *bdberr)
     bdb_berkdb_t *newberkdb_sd = NULL;
     int rc = 0;
 
+    if(cur->trak){
+        logmsg(LOGMSG_USER,"%s:%d. Cur: %p dtafile: %d cur->idx: %d cur->addcur: %p cur->state->attr->dtastripe: %d\n",__FILE__,__LINE__, cur, dtafile, cur->idx, cur->addcur, cur->state->attr->dtastripe);
+    }
     *bdberr = 0;
     if (!IS_VALID_DTA(dtafile))
         return IX_NOTFND;
@@ -6048,9 +6052,9 @@ static int bdb_cursor_move_int(bdb_cursor_impl_t *cur, int how, int *bdberr)
     cur->nsteps++;
 
     if (cur->trak) {
-        logmsg(LOGMSG_USER, "Cur %p %s move %s stripe %d\n", cur,
+        logmsg(LOGMSG_USER, "Cur %p %s move %s stripe %d is_pageorder %d data %p\n", cur,
                 (cur->type == BDBC_DT) ? "data" : "index", tellmehow(how),
-                cur->idx);
+                cur->idx, cur->pageorder, cur->data);
     }
 
     /* Increment cursor-version. */
