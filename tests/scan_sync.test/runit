@@ -24,7 +24,7 @@ for ((i=0;i<10;i++)) ; do
     cdb2sql ${CDB2_OPTIONS} $dbnm default "insert into t1(a) values($i)"
 done
 
-THRDS=1
+THRDS=20
 CNT=1
 ITERATIONS=1
 TABLE=t1

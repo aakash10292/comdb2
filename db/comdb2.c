@@ -162,9 +162,10 @@ int gbl_recovery_lsn_offset = 0;
 int gbl_trace_prepare_errors = 0;
 int gbl_trigger_timepart = 0;
 int gbl_extended_sql_debug_trace = 0;
+int gbl_scan_sync = 1;
 extern int gbl_dump_fsql_response;
 struct ruleset *gbl_ruleset = NULL;
-
+struct scan_sync_info_list **gbl_scan_sync_info = NULL;
 void myctrace(const char *c) { ctrace("%s", c); }
 
 void berkdb_use_malloc_for_regions_with_callbacks(void *mem,
@@ -5576,6 +5577,16 @@ int main(int argc, char **argv)
         } else {
             logmsg(LOGMSG_USER, "authentication enabled, DBA user not created\n");
         }
+    }
+
+    // create list of scan_sync_info_t pointers.
+    // We need one pointer for each table;
+    
+    int num_tables = thedb->num_dbs;
+    gbl_scan_sync_info = malloc(num_tables * sizeof(struct scan_sync_info_t *));
+    logmsg(LOGMSG_USER, "initialising list of per-table pointers to scan_sync info\n");
+    for(int i=0;i<num_tables;i++){
+        gbl_scan_sync_info[i] = NULL;
     }
 
     gbl_ready = 1;

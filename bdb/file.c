@@ -6955,6 +6955,7 @@ int get_dbnum_by_handle(bdb_state_type *bdb_state)
 
     for (i = 0; i < bdb_state->parent->numchildren; i++)
         if (bdb_state->parent->children[i] == bdb_state) {
+            logmsg(LOGMSG_USER,"THE TABLE NAME IS %s\n", bdb_state->name);
             bdb_unlock_children_lock(bdb_state);
             return i;
         }

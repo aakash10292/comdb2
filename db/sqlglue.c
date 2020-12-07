@@ -2474,6 +2474,7 @@ static int cursor_move_table(BtCursor *pCur, int *pRes, int how)
                buf = pCur->bdbcur->data(pCur->bdbcur);
                ver = pCur->bdbcur->ver(pCur->bdbcur);
              */
+            logmsg(LOGMSG_USER,"%s:%d calling get_found_data\n", __func__, __LINE__);
             pCur->bdbcur->get_found_data(pCur->bdbcur, &pCur->rrn, &pCur->genid,
                                          &sz, &buf, &ver);
             vtag_to_ondisk_vermap(pCur->db, buf, &sz, ver);

@@ -2304,4 +2304,9 @@ int bdb_iam_master(bdb_state_type *bdb_state);
 
 int32_t bdb_get_dbopen_gen(void);
 
+struct scan_sync_info_t {
+    unsigned long long genid;
+    int stripe;
+    int page;
+};
 #endif

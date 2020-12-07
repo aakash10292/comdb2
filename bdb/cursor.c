@@ -178,6 +178,8 @@ extern DB_LSN bdb_latest_commit_lsn;
 extern uint32_t bdb_latest_commit_gen;
 extern pthread_cond_t bdb_asof_current_lsn_cond;
 
+extern struct scan_sync_info_t **gbl_scan_sync_info_list;
+
 static int bdb_switch_stripe(bdb_cursor_impl_t *cur, int dtafile, int *bdberr);
 static int bdb_cursor_find_merge(bdb_cursor_impl_t *cur, void *key, int keylen,
                                  int *bdberr);
@@ -4226,6 +4228,9 @@ static int bdb_switch_stripe(bdb_cursor_impl_t *cur, int dtafile, int *bdberr)
 
         cur->idx = dtafile;
 
+        if(cur->trak){
+            logmsg(LOGMSG_USER, "%s:%d opening cursor to new underlying berkdb\n",__func__,__LINE__);
+        }
         newberkdb_rl = bdb_berkdb_open(cur, cur->rowlocks ? BERKDB_REAL_ROWLOCKS
                                                           : BERKDB_REAL,
                                        MAXRECSZ, MAXKEYSZ, bdberr);
@@ -4515,7 +4520,9 @@ static int bdb_cursor_move_and_skip_int(bdb_cursor_impl_t *cur,
     do {
 
         if (!retrieved) {
+            hexdump(LOGMSG_USER,berkdb->impl->u.rl.key.data,berkdb->impl->u.rl.key.size);
             rc = berkdb->move(berkdb, howcrt, bdberr);
+            hexdump(LOGMSG_USER,berkdb->impl->u.rl.key.data,berkdb->impl->u.rl.key.size);
             if (rc < 0)
                 return rc;
 
@@ -5392,6 +5399,11 @@ static int bdb_cursor_move_merge(bdb_cursor_impl_t *cur, int how, int *bdberr)
        - when we do an absolute move (last, next), we need to do
        a reset of used
      */
+
+    if(cur->trak){
+        logmsg(LOGMSG_USER,"%s:%d cur->rl: %p cur->data: %p cur->datalen: %d cur->type: %d cur->idx: %d cur->addcur: %p cur->genid: %lld\n",
+                __func__,__LINE__,cur->rl,cur->data,cur->datalen, cur->type, cur->idx, cur->addcur, cur->genid);
+    }
     if (how != DB_NEXT && how != DB_PREV) {
         cur->used_rl = 0;
         cur->used_sd = 0;
@@ -5492,6 +5504,7 @@ step1:
 
             /* Get current stripe. */
             stripe_rl = cur->idx;
+            logmsg(LOGMSG_USER, "THREAD: %p\nTHE CURRENT STRIPE is: %d\nTHE CURRENT PAGE is: %d\nTHE CURRENT GENID is: %lld\n", (void *)pthread_self(),stripe_rl, page_rl,genid_rl);
 
             got_rl = 1;
         }
@@ -6052,9 +6065,9 @@ static int bdb_cursor_move_int(bdb_cursor_impl_t *cur, int how, int *bdberr)
     cur->nsteps++;
 
     if (cur->trak) {
-        logmsg(LOGMSG_USER, "Cur %p %s move %s stripe %d is_pageorder %d data %p\n", cur,
+        logmsg(LOGMSG_USER, "Cur %p %s move %s stripe %d is_pageorder %d data %p cur->genid: %lld\n", cur,
                 (cur->type == BDBC_DT) ? "data" : "index", tellmehow(how),
-                cur->idx, cur->pageorder, cur->data);
+                cur->idx, cur->pageorder, cur->data, cur->genid);
     }
 
     /* Increment cursor-version. */
@@ -6182,6 +6195,12 @@ static int bdb_cursor_move_int(bdb_cursor_impl_t *cur, int how, int *bdberr)
 
     do {
         /* both real data and index files are ending up here */
+        /*
+         * If this is a table scan, and scan syncing is enabled, then
+         * - If another thread is already performing a table scan then we try and 
+         *   sync our scan with the scan of that thread i.e attempt to move in lockstep
+         *
+         */
         rc = bdb_cursor_move_merge(cur, crt_how, bdberr);
         if (rc < 0)
             return rc;
@@ -8104,9 +8123,9 @@ static int bdb_btree_update_shadows(bdb_cursor_impl_t *cur, int how,
          cur->shadow_tran->tranclass != TRANCLASS_SERIALIZABLE)) {
         if (cur->trak) {
             if (!cur->shadow_tran) {
-                logmsg(LOGMSG_USER, "Cur %p skipping update shadows because "
+                logmsg(LOGMSG_USER, "Cur %p %s:%d skipping update shadows because "
                                 "shadow_tran is NULL\n",
-                        cur);
+                        cur,__FILE__,__LINE__);
             } else if (cur->shadow_tran->tranclass != TRANCLASS_SNAPISOL &&
                        cur->shadow_tran->tranclass != TRANCLASS_SERIALIZABLE) {
                 logmsg(LOGMSG_USER,
