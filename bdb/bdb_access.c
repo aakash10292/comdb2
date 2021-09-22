@@ -400,3 +400,4 @@ int bdb_create_dba_user(bdb_state_type *bdb_state)
 done:
     return rc;
 }
+
