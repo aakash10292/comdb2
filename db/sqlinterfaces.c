@@ -110,7 +110,7 @@
 
 #include "dohsql.h"
 #include "comdb2_query_preparer.h"
-
+#include "comdb2_message_queue.h"
 /* delete this after comdb2_api.h changes makes it through */
 #define SQLHERR_MASTER_QUEUE_FULL -108
 #define SQLHERR_MASTER_TIMEOUT -109
@@ -170,6 +170,7 @@ int gbl_bpfunc_auth_gen = 1;
 struct thdpool *gbl_sqlengine_thdpool = NULL;
 
 comdb2_query_preparer_t *query_preparer_plugin;
+comdb2_queue_pub_t *log_publisher_plugin;
 
 void rcache_init(size_t, size_t);
 void rcache_destroy(void);

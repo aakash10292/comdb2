@@ -133,7 +133,8 @@ void berk_memp_sync_alarm_ms(int);
 #include "time_accounting.h"
 #include <build/db.h>
 #include "comdb2_query_preparer.h"
-
+#include "log_publisher.h"
+#include "comdb2_message_queue.h"
 #define QUOTE_(x) #x
 #define QUOTE(x) QUOTE_(x)
 
@@ -5250,7 +5251,6 @@ struct tool tool_callbacks[] = {
    TOOLS
    {NULL, NULL}
 };
-
 int main(int argc, char **argv)
 {
     int rc;
@@ -5455,6 +5455,20 @@ int main(int argc, char **argv)
         logmsg(LOGMSG_FATAL, "Can't wait for timer thread %d %s\n", rc,
                 strerror(rc));
         return 1;
+    }
+
+    pthread_t log_publisher_tid;
+    pthread_attr_t log_publisher_attr;
+    Pthread_attr_init(&log_publisher_attr);
+    Pthread_attr_setstacksize(&log_publisher_attr, DEFAULT_THD_STACKSZ);
+    Pthread_attr_setdetachstate(&log_publisher_attr, PTHREAD_CREATE_JOINABLE);
+    log_publisher_args_t *log_pub_args = (log_publisher_args_t *) malloc(sizeof(log_publisher_args_t));
+    log_pub_args->pub = log_publisher_plugin;
+    log_pub_args->flags = 0;
+    rc = pthread_create(&log_publisher_tid, &log_publisher_attr, publish_logs, log_pub_args);
+    Pthread_attr_destroy(&log_publisher_attr);
+    if (rc) {
+        logmsg(LOGMSG_USER, "COULD NOT CREATE LOG PUBLISHER THREAD %d %s\n", rc, strerror(rc));
     }
 
     return 0;

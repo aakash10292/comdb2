@@ -31,6 +31,7 @@ set(src
   indices.c
   localrep.c
   lrucache.c
+  log_publisher.c
   marshal.c
   memdebug.c
   osql_srs.c

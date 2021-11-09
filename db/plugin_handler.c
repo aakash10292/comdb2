@@ -31,6 +31,7 @@
 #include "comdb2_machine_info.h"
 #include "comdb2_initializer.h"
 #include "comdb2_query_preparer.h"
+#include "comdb2_message_queue.h"
 #include "rtcpu.h"
 #include "all_static_plugins.h"
 #include "trigger.h"
@@ -140,6 +141,10 @@ static int install_plugin_int(comdb2_plugin_t *new_plugin)
         break;
     case COMDB2_PLUGIN_QUERY_PREPARER: {
         query_preparer_plugin = (comdb2_query_preparer_t *)new_plugin->data;
+        break;
+    }
+    case COMDB2_PLUGIN_MESSAGE_QUEUE: {
+        log_publisher_plugin = (comdb2_queue_pub_t *)new_plugin->data;
         break;
     }
     default:
