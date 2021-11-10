@@ -4675,6 +4675,20 @@ void *statthd(void *p)
     return NULL;
 }
 
+void create_log_publisher_thread()
+{
+    pthread_t log_pub_tid;
+    int rc;
+
+    log_publisher_args_t *log_pub_args = (log_publisher_args_t *) malloc(sizeof(log_publisher_args_t));
+    log_pub_args->pub = log_publisher_plugin;
+    log_pub_args->flags = 0;
+    rc = pthread_create(&log_pub_tid, &gbl_pthread_attr, publish_logs, log_pub_args);
+    if (rc) {
+        logmsg(LOGMSG_FATAL, "pthread_create log_publisher rc %d\n", rc);
+        abort();
+    }
+}
 void create_stat_thread(struct dbenv *dbenv)
 {
     pthread_t stat_tid;
@@ -5387,7 +5401,7 @@ int main(int argc, char **argv)
     create_watchdog_thread(thedb);
     create_old_blkseq_thread(thedb);
     create_stat_thread(thedb);
-
+    create_log_publisher_thread();
     /* create the offloadsql repository */
     if (!gbl_create_mode && thedb->nsiblings > 0) {
         if (osql_open(thedb)) {
@@ -5456,21 +5470,6 @@ int main(int argc, char **argv)
                 strerror(rc));
         return 1;
     }
-
-    pthread_t log_publisher_tid;
-    pthread_attr_t log_publisher_attr;
-    Pthread_attr_init(&log_publisher_attr);
-    Pthread_attr_setstacksize(&log_publisher_attr, DEFAULT_THD_STACKSZ);
-    Pthread_attr_setdetachstate(&log_publisher_attr, PTHREAD_CREATE_JOINABLE);
-    log_publisher_args_t *log_pub_args = (log_publisher_args_t *) malloc(sizeof(log_publisher_args_t));
-    log_pub_args->pub = log_publisher_plugin;
-    log_pub_args->flags = 0;
-    rc = pthread_create(&log_publisher_tid, &log_publisher_attr, publish_logs, log_pub_args);
-    Pthread_attr_destroy(&log_publisher_attr);
-    if (rc) {
-        logmsg(LOGMSG_USER, "COULD NOT CREATE LOG PUBLISHER THREAD %d %s\n", rc, strerror(rc));
-    }
-
     return 0;
 }
 

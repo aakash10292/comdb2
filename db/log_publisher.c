@@ -37,7 +37,7 @@ void *publish_logs(void *args){
     /* first get a log cursor */
     rc = bdb_state->dbenv->log_cursor(bdb_state->dbenv,&logc,0);
     if(rc != 0){
-        logmsg(LOGMSG_ERROR, "%s line %d error getting a log cursor rc=%d\n",
+        logmsg(LOGMSG_USER, "%s line %d error getting a log cursor rc=%d\n",
                 __func__, __LINE__, rc);
         return NULL;
     }
@@ -54,7 +54,7 @@ void *publish_logs(void *args){
             if(cur_flags != DB_NEXT && cur_flags != DB_PREV){
                 // we encountered an error while fetching the first log itself
                 // report and return (?)
-                logmsg(LOGMSG_ERROR, "%s line %d error getting first log record rc=%d\n",
+                logmsg(LOGMSG_USER, "%s line %d error getting first log record rc=%d\n",
                         __func__, __LINE__, rc);
                 return NULL;
             }
@@ -83,10 +83,10 @@ void *publish_logs(void *args){
         //
         char lsn_str[LSN_SIZE];
         tranlog_lsn_to_str(lsn_str, &prev_lsn);
-
+        logmsg(LOGMSG_USER, "The LSN str is %s\n", lsn_str);
         void *buf = (void *) malloc(LSN_SIZE + data.size);
         if(!buf){
-            logmsg(LOGMSG_ERROR, "%s line %d malloc error!\n",
+            logmsg(LOGMSG_USER, "%s line %d malloc error!\n",
                     __func__, __LINE__);
             return NULL;
         }
@@ -99,7 +99,7 @@ void *publish_logs(void *args){
         // publish the buffer
         int rc = publisher->pub->publish(buf, sizeof(buf));
         if(rc !=0){
-            logmsg(LOGMSG_ERROR, "%s line %d error publishing log rc=%d\n",
+            logmsg(LOGMSG_USER, "%s line %d error publishing log rc=%d\n",
                     __func__, __LINE__, rc);
             
         }
