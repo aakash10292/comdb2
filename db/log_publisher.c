@@ -27,7 +27,7 @@ static inline void tranlog_copy_lsn(DB_LSN *to, DB_LSN *from){
 
 void *publish_logs(void *args){
     bdb_state_type *bdb_state = thedb->bdb_env;
-    log_publisher_args_t *publisher = (log_publisher_args_t *) malloc(sizeof(log_publisher_args_t));
+    log_publisher_args_t *publisher = (log_publisher_args_t *) args;
     int rc;
     DB_LOGC *logc;
     DB_LSN prev_lsn;

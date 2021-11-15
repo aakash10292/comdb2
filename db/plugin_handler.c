@@ -328,6 +328,8 @@ const char *comdb2_plugin_type_to_str(int type)
         return "queue_consumer";
     case COMDB2_PLUGIN_QUERY_PREPARER:
         return "query_preparer";
+    case COMDB2_PLUGIN_MESSAGE_QUEUE:
+        return "message_queue";
     default:
         break;
     }
