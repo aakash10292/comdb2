@@ -4377,6 +4377,10 @@ check_version:
                 }
             }
 
+
+            /* save the views generation number */
+            thd->views_gen = gbl_views_gen;
+        }
             if (thedb->mod_shard_views) {
                 rc = mod_views_sqlite_update(thedb->mod_shard_views, thd->sqldb,
                                             &xerr);
@@ -4388,10 +4392,6 @@ check_version:
                     abort();
                 }
             }
-
-            /* save the views generation number */
-            thd->views_gen = gbl_views_gen;
-        }
     }
  done: /* reached via goto for error handling case. */
     if (got_views_lock) {
