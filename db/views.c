@@ -3321,13 +3321,13 @@ int partition_publish(tran_type *tran, struct schema_change_type *sc)
             break;
         }
         case PARTITION_ADD_MOD: {
-            partition_name = strdup((char *)mod_view_get_viewname(sc->newshard));
-            rc = mod_create_inmem_view(sc->newshard);
+            partition_name = strdup((char *)mod_view_get_viewname(sc->new_modpart));
+            rc = mod_create_inmem_view(sc->new_modpart);
             break;
         }
         case PARTITION_REMOVE_MOD: {
-            partition_name = strdup((char *)mod_view_get_viewname(sc->newshard));
-            rc = mod_destroy_inmem_view(sc->newshard);
+            partition_name = strdup((char *)mod_view_get_viewname(sc->new_modpart));
+            rc = mod_destroy_inmem_view(sc->new_modpart);
             break;
         }
         } /*switch */
@@ -3336,7 +3336,7 @@ int partition_publish(tran_type *tran, struct schema_change_type *sc)
             rc = bdb_llog_mod_partition(thedb->bdb_env, tran, partition_name, &bdberr);
             if (rc || bdberr != BDBERR_NOERROR) {
                 logmsg(LOGMSG_ERROR, "%s: Failed to log scdone for mod partition %s\n", __func__,
-                       sc->newshard ? mod_view_get_viewname(sc->newshard) : sc->tablename);
+                       sc->new_modpart ? mod_view_get_viewname(sc->new_modpart) : sc->tablename);
             }
         } else {
             rc = bdb_llog_time_partition(thedb->bdb_env, tran,
@@ -3371,11 +3371,11 @@ void partition_unpublish(struct schema_change_type *sc)
             break;
         }
         case PARTITION_ADD_MOD: {
-            mod_destroy_inmem_view(sc->newshard);
+            mod_destroy_inmem_view(sc->new_modpart);
             break;
         }
         case PARTITION_REMOVE_MOD: {
-            int rc = mod_create_inmem_view(sc->newshard);
+            int rc = mod_create_inmem_view(sc->new_modpart);
             if (rc) {
                 /* Really no way forward except restart */
                 abort();

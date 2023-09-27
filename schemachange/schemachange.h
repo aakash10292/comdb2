@@ -270,7 +270,7 @@ struct schema_change_type {
     struct dbtable *db;
     struct dbtable *newdb;
     struct timepart_view *newpartition;
-    mod_view_t *newshard; /* TODO : Refactor this and make it an enum to hold partitions of various kinds */
+    mod_view_t *new_modpart; /* TODO : Refactor this and make it an enum to hold partitions of various kinds */
     struct scplan plan; /**** TODO This is an abomination, i know. Yet still
                            much better than on the stack where I found it.
                              At least this datastructure lives as much as the

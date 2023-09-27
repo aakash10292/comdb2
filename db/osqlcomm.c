@@ -6018,21 +6018,21 @@ static int _process_single_table_sc_mod_partitioning(struct ireq *iq)
 
     if (sc->partition.type == PARTITION_ADD_MOD) {
         /* create a mod based shard */
-        sc->newshard = create_mod_view(sc->partition.u.mod.viewname, sc->tablename, sc->partition.u.mod.num_columns,
+        sc->new_modpart = create_mod_view(sc->partition.u.mod.viewname, sc->tablename, sc->partition.u.mod.num_columns,
                                        sc->partition.u.mod.columns, sc->partition.u.mod.num_shards,
                                        sc->partition.u.mod.keys, sc->partition.u.mod.shards, &err);
-        if (!sc->newshard) {
+        if (!sc->new_modpart) {
             logmsg(LOGMSG_ERROR, "Failed to create new Mod partition rc %d \"%s\"\n", err.errval, err.errstr);
             sc_errf(sc, "Failed to create new Mod partition rc %d \"%s\"", err.errval, err.errstr);
             rc = ERR_SC;
             return rc;
         }
-        view = sc->newshard;
+        view = sc->new_modpart;
     } else {
         /* If it's a DROP then copy base table name */
         /* Also, grab a pointer to the in-mem view structure */
         mod_get_inmem_view(sc->tablename, &view);
-        sc->newshard = view;
+        sc->new_modpart = view;
         strncpy(sc->tablename, mod_view_get_tablename(view), sizeof(sc->tablename));
     }
     /* set publish and unpublish callbacks to create/destroy inmem views */
