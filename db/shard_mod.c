@@ -192,7 +192,7 @@ static int create_inmem_view(hash_t *mod_views, mod_view_t *view)
 static int destroy_inmem_view(hash_t *mod_views, mod_view_t *view)
 {
     if (!view) {
-        logmsg(LOGMSG_USER, "SOMETHING IS WRONG. VIEW CAN'T BE NULL\n");
+        logmsg(LOGMSG_ERROR, "View is NULL!\n");
         return VIEW_ERR_NOTFOUND;
     }
     Pthread_rwlock_wrlock(&mod_shard_lk);
@@ -227,10 +227,9 @@ unsigned long long mod_shard_get_partition_version(const char *name)
 {
     struct dbtable *db = get_dbtable_by_name(name);
     if (!db) {
-        logmsg(LOGMSG_USER, "Could not find partition %s\n", name);
+        logmsg(LOGMSG_ERROR, "Could not find partition %s\n", name);
         return VIEW_ERR_NOTFOUND;
     }
-    logmsg(LOGMSG_USER, "RETURNING PARTITION VERSION %lld\n", db->tableversion);
     return db->tableversion;
 }
 
@@ -245,7 +244,7 @@ unsigned long long mod_view_get_version(const char *name)
 {
     struct mod_view *v = NULL;
     if (find_inmem_view(thedb->mod_shard_views, name, &v)) {
-        logmsg(LOGMSG_USER, "Could not find partition %s\n", name);
+        logmsg(LOGMSG_ERROR, "Could not find partition %s\n", name);
         return VIEW_ERR_NOTFOUND;
     }
 
@@ -301,7 +300,7 @@ int mod_partition_llmeta_erase(void *tran, mod_view_t *view, struct errstat *err
     logmsg(LOGMSG_USER, "Erasing view %s\n", view_name);
     rc = mod_views_write_view(tran, view_name, NULL, 0);
     if (rc != VIEW_NOERR) {
-        logmsg(LOGMSG_USER, "Failed to erase llmeta entry for partition %s. rc: %d\n", view_name, rc);
+        logmsg(LOGMSG_ERROR, "Failed to erase llmeta entry for partition %s. rc: %d\n", view_name, rc);
     }
     ++gbl_views_gen;
     view->version = gbl_views_gen;
@@ -429,7 +428,7 @@ static int mod_update_partition_version(void *arg, void *tran)
     if (db) {
         db->tableversion = table_version_select(db, tran);
     } else {
-        logmsg(LOGMSG_USER, "UNABLE TO LOCATE partition %s\n", shard->dbname);
+        logmsg(LOGMSG_ERROR, "UNABLE TO LOCATE partition %s\n", shard->dbname);
         return -1;
     }
     return 0;
@@ -450,7 +449,7 @@ int mod_views_update_replicant(void *tran, const char *name)
         view = NULL;
         goto update_view_hash;
     } else if (rc != VIEW_NOERR || !view_str) {
-        logmsg(LOGMSG_ERROR, "%s: Could not read metadata for view %s\n", __func__, name);
+        logmsg(LOGMSG_ERROR, "%s:%d Could not read metadata for view %s\n", __func__, __LINE__, name);
         goto done;
     }
 
@@ -458,7 +457,7 @@ int mod_views_update_replicant(void *tran, const char *name)
     /* create an in-mem view object */
     view = mod_deserialize_view(view_str, &xerr);
     if (!view) {
-        logmsg(LOGMSG_ERROR, "%s: failed to deserialize mod view %d %s\n", __func__, xerr.errval, xerr.errstr);
+        logmsg(LOGMSG_ERROR, "%s:%d failed to deserialize mod view %d %s\n", __func__, __LINE__, xerr.errval, xerr.errstr);
         goto done;
     }
     hash_for(mod_view_get_shards(view), mod_update_partition_version, tran);
@@ -474,7 +473,7 @@ update_view_hash:
          * grabs a lock and does a find again */
         v = hash_find_readonly(mod_views, &name);
         if (!v) {
-            logmsg(LOGMSG_ERROR, "Couldn't find view in llmeta or in-mem hash\n");
+            logmsg(LOGMSG_ERROR, "%s:%d Couldn't find view in llmeta or in-mem hash\n", __func__, __LINE__);
             goto done;
         }
         rc = mod_destroy_inmem_view(v);
