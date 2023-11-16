@@ -662,7 +662,7 @@ alter_struct:
         create_sqlmaster_records(tran);
         create_sqlite_master(); /* create sql statements */
 
-        BDB_BUMP_DBOPEN_GEN(views, "alias table");
+        BDB_BUMP_DBOPEN_GEN(timepart_views, "alias table");
     }
 
     /* NOTE: this has to be done under schema change lock */
