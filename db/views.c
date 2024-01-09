@@ -3321,6 +3321,7 @@ int partition_publish(tran_type *tran, struct schema_change_type *sc)
             break;
         }
         case PARTITION_ADD_MOD: {
+                                    logmsg(LOGMSG_USER, "++++++++++ publishing mod view\n");
             partition_name = strdup((char *)mod_view_get_viewname(sc->new_modpart));
             rc = mod_create_inmem_view(sc->new_modpart);
             break;

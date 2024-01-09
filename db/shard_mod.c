@@ -442,6 +442,10 @@ int mod_views_update_replicant(void *tran, const char *name)
     logmsg(LOGMSG_USER, "++++++ Replicant updating views\n");
     char *view_str = NULL;
     struct errstat xerr = {0};
+    mod_shard_t *shard = NULL;
+    struct dbtable *table = NULL;
+    void *ent;
+    unsigned int bkt;
 
     /* read the view str from updated llmeta */
     rc = mod_views_read_view(tran, name, &view_str);
@@ -495,8 +499,20 @@ update_view_hash:
     }
 
     ++gbl_views_gen;
-    if (view) {
+    if (view) { 
         view->version = gbl_views_gen;
+    }
+
+    /*As a final step set the partition_name and partition_type for the shards */
+    for (shard = (mod_shard_t *)hash_first(mod_view_get_shards(view), &ent, &bkt); shard != NULL;
+         shard = (mod_shard_t *)hash_next(mod_view_get_shards(view), &ent, &bkt)) {
+        table = get_dbtable_by_name(mod_shard_get_dbname(shard));
+        if (table) {
+            table->partition_name = mod_view_get_viewname(view);
+            table->partition_type = TABLE_PARTITION_MODULUS;
+        } else {
+            abort();
+        }
     }
     return rc;
 done:
@@ -507,4 +523,33 @@ done:
         free_mod_view(view);
     }
     return rc;
+}
+
+
+char* modpart_is_shard(const char *tablename){
+    mod_view_t *view = NULL;
+    mod_shard_t *shard = NULL;
+
+    void *ent;
+    unsigned int bkt;
+    void *shard_ent;
+    unsigned int shard_bkt;
+    char *partition_name = NULL;
+    Pthread_rwlock_rdlock(&mod_shard_lk);
+    for (view = (mod_view_t *)hash_first(thedb->mod_shard_views, &ent, &bkt); view != NULL;
+         view = (mod_view_t *)hash_next(thedb->mod_shard_views, &ent, &bkt)) {
+        for (shard = (mod_shard_t *)hash_first(mod_view_get_shards(view), &shard_ent, &shard_bkt); shard != NULL;
+             shard = (mod_shard_t *)hash_next(mod_view_get_shards(view), &shard_ent, &shard_bkt)) {
+
+            // if shard name is table name, capture view name as the partition name
+            if (strcmp(tablename, mod_shard_get_dbname(shard))==0){
+                partition_name = (char *)mod_view_get_viewname(view);
+                Pthread_rwlock_unlock(&mod_shard_lk);
+                return partition_name;
+            }
+        }
+    }
+
+    Pthread_rwlock_unlock(&mod_shard_lk);
+    return partition_name;
 }

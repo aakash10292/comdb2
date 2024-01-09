@@ -594,6 +594,12 @@ void consumer_lock_write_int(struct dbtable *db, const char *func, int line);
 #define consumer_unlock(x) consumer_unlock_int(x, __func__, __LINE__);
 void consumer_unlock_int(struct dbtable *db, const char *func, int line);
 
+enum table_partition_type {
+    TABLE_PARTITION_TIME,
+    TABLE_PARTITION_MODULUS,
+    TABLE_PARTITION_HASH,
+    TABLE_PARTITION_NONE,
+};
 /*
  * We now have different types of db (I overloaded this structure rather than
  * create a new structure because the ireq usedb concept is endemic anyway).
@@ -789,6 +795,10 @@ typedef struct dbtable {
     unsigned do_local_replication : 1;
 
     /* name of the timepartition, if this is a shard */
+    enum table_partition_type partition_type;
+    const char *partition_name;
+
+    /* TODO: AAR -> refactor below to use two vars above*/
     const char *timepartition_name;
 } dbtable;
 

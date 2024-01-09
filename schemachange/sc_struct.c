@@ -1298,7 +1298,7 @@ clone_schemachange_type(struct schema_change_type *sc)
     newsc->timepartition_version = sc->timepartition_version;
     newsc->partition = sc->partition;
     newsc->usedbtablevers = sc->usedbtablevers;
-
+    newsc->new_modpart = sc->new_modpart;
     if (!p_buf) {
         free_schema_change_type(newsc);
         free(buf);

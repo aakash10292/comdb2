@@ -27,4 +27,5 @@ int mod_views_update_replicant(void *tran, const char *name);
 int mod_get_inmem_view(const char *name, mod_view_t **oView);
 int is_mod_partition(const char *name);
 unsigned long long mod_view_get_version(const char *name);
+char* modpart_is_shard(const char *tablename);
 #endif

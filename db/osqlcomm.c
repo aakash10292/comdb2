@@ -5994,7 +5994,6 @@ static int mod_sc_partition(void *obj, void *arg)
                         which is set to sc_next below*/
     /* copy shard name */
     strncpy0(iq->sc->tablename, mod_shard_get_dbname(shard), sizeof(iq->sc->tablename));
-
     logmsg(LOGMSG_USER, "RUNNING SC TRAN FOR TABLE %s\n", sc->tablename);
     rc = start_schema_change_tran(iq, NULL);
     if ((rc != SC_ASYNC && rc != SC_COMMIT_PENDING) || iq->sc->preempted == SC_ACTION_RESUME ||
