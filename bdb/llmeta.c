@@ -1310,6 +1310,9 @@ int bdb_llmeta_set_tables(
     const uint8_t *p_table_names_key;
     const uint8_t *p_table_names_key_end;
 
+    if (!input_trans) {
+        abort();
+    }
     /*fail if the db isn't open*/
     if (!llmeta_bdb_state) {
         logmsg(LOGMSG_ERROR, "%s: low level meta table not yet "
@@ -1487,6 +1490,9 @@ int bdb_llmeta_get_tables(
     const uint8_t *p_table_names_key;
     const uint8_t *p_table_names_key_end;
 
+    if (!input_trans) {
+        abort();
+    }
     /*stop here if the db isn't open*/
     if (!llmeta_bdb_state) {
         *bdberr = BDBERR_DBEMPTY;
