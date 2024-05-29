@@ -965,7 +965,7 @@ struct dbenv {
     int incoh_notcoherent;
     uint32_t incoh_file, incoh_offset;
     timepart_views_t *timepart_views;
-
+    hash_t *hash_partition_views;
     struct time_metric* service_time;
     struct time_metric* queue_depth;
     struct time_metric* concurrent_queries;
@@ -3655,5 +3655,5 @@ void csc2_free_all(void);
 void csc2_allow_bools(void);
 void csc2_disallow_bools(void);
 int csc2_used_bools(void);
-
+extern pthread_rwlock_t hash_partition_lk;
 #endif /* !INCLUDED_COMDB2_H */
