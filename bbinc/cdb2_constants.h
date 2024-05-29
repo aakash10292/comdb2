@@ -38,6 +38,7 @@
 #define MAX_SPNAME MAXTABLELEN
 #define MAX_SPVERSION_LEN 80
 #define MAXTABLELEN 32
+#define MAXPARTITIONS 32
 #define MAXTAGLEN 64
 #define REPMAX 32
 /* Maximum buffer length for generated key name. */
