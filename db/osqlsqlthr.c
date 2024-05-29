@@ -1839,6 +1839,8 @@ int osql_schemachange_logic(struct schema_change_type *sc,
             if (first_shardname) {
                 sc->usedbtablevers = version;
                 free(first_shardname);
+            } else if (is_hash_partition(sc->tablename)) {
+                sc->usedbtablevers = hash_view_get_version(sc->tablename);
             } else /* user view */
                 usedb = 0;
         }

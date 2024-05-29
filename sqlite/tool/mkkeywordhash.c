@@ -235,6 +235,9 @@ static Keyword aKeywordTable[] = {
   { "GROUP",            "TK_GROUP",        ALWAYS                 },
   { "GROUPS",           "TK_GROUPS",       WINDOWFUNC             },
   { "HAVING",           "TK_HAVING",       ALWAYS                 },
+#if defined(SQLITE_BUILDING_FOR_COMDB2)
+  { "HASH",             "TK_HASH",         ALWAYS                 },
+#endif
   { "IF",               "TK_IF",           ALWAYS                 },
   { "IGNORE",           "TK_IGNORE",       CONFLICT|TRIGGER       },
   { "IMMEDIATE",        "TK_IMMEDIATE",    ALWAYS                 },
@@ -377,6 +380,7 @@ static Keyword aKeywordTable[] = {
   { "OFF",               "TK_OFF",               ALWAYS           },
   { "PAGEORDER",         "TK_PAGEORDER",         ALWAYS           },
   { "PARTITIONED",       "TK_PARTITIONED",       ALWAYS           },
+  { "PARTITIONS",        "TK_PARTITIONS",        ALWAYS           },
   { "PASSWORD",          "TK_PASSWORD",          ALWAYS           },
   { "PAUSE",             "TK_PAUSE",             ALWAYS           },
   { "PERIOD",            "TK_PERIOD",            ALWAYS           },
