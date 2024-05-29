@@ -969,11 +969,11 @@ struct dbenv {
     int incoh_notcoherent;
     uint32_t incoh_file, incoh_offset;
     timepart_views_t *timepart_views;
-
-    struct time_metric *service_time;
-    struct time_metric *queue_depth;
-    struct time_metric *concurrent_queries;
-    struct time_metric *connections;
+    hash_t *hash_partition_views;
+    struct time_metric* service_time;
+    struct time_metric* queue_depth;
+    struct time_metric* concurrent_queries;
+    struct time_metric* connections;
     struct time_metric *sql_queue_time;
     struct time_metric *handle_buf_queue_time;
     struct time_metric *watchdog_time;
@@ -3711,4 +3711,5 @@ static inline char *skipws(char *str)
     return str;
 }
 
+extern pthread_rwlock_t hash_partition_lk;
 #endif /* !INCLUDED_COMDB2_H */

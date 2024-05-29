@@ -231,3 +231,128 @@ char *_views_destroy_insert_trigger_query(const char *view_name,
 {
     return _views_destroy_trigger_query(view_name, err, "ins", "insert");
 }
+
+char *hash_views_create_insert_trigger_query(hash_view_t *view, struct errstat *err)
+{
+    char *ret_str = NULL;
+    char *tmp_str = NULL;
+    char *cols_str = NULL;
+
+    const char *view_name = hash_view_get_viewname(view);
+    const char *tbl_name = hash_view_get_tablename(view);
+    cols_str = _describe_row(tbl_name, NULL, VIEWS_TRIGGER_INSERT, err);
+    if (!cols_str) {
+        goto oom;
+    }
+
+    ret_str = sqlite3_mprintf("CREATE TRIGGER \"%w_%w\" INSTEAD OF INSERT ON \"%w\" BEGIN", view_name,
+                              TRIGGER_SUFFIX_INS, view_name);
+    if (!ret_str) {
+        goto oom;
+    }
+
+    int num_partitions = hash_view_get_num_partitions(view);
+    char **partitions = hash_view_get_partitions(view);
+    for (int i=0;i<num_partitions;i++) {
+        tmp_str = sqlite3_mprintf("%s\nINSERT INTO \"%w\" VALUES ( %s );\n", ret_str, partitions[i], cols_str);
+        ret_str = tmp_str;
+    }
+
+    tmp_str = sqlite3_mprintf("%s\nEND;", ret_str);
+    sqlite3_free(ret_str);
+    ret_str = tmp_str;
+
+    errstat_set_rc(err, VIEW_NOERR);
+
+    dbg_verbose_sqlite("Generated insert trigger:\n%s\n", ret_str);
+    return ret_str;
+
+oom:
+    if (cols_str)
+        sqlite3_free(cols_str);
+    errstat_set_rc(err, VIEW_ERR_MALLOC);
+    errstat_set_strf(err, "%s Malloc OOM", __func__);
+
+    return NULL;
+}
+
+char *hash_views_create_update_trigger_query(hash_view_t *view, struct errstat *err)
+{
+    char *ret_str = NULL;
+    char *tmp_str = NULL;
+    char *cols_str = NULL;
+
+    const char *view_name = hash_view_get_viewname(view);
+    const char *tbl_name = hash_view_get_tablename(view);
+
+    ret_str = sqlite3_mprintf("CREATE TRIGGER \"%w_%w\" INSTEAD OF UPDATE ON \"%w\" BEGIN", view_name,
+                              TRIGGER_SUFFIX_UPD, view_name);
+    if (!ret_str) {
+        goto oom;
+    }
+
+    cols_str = _describe_row(tbl_name, NULL, VIEWS_TRIGGER_UPDATE, err);
+    if (!cols_str) {
+        sqlite3_free(ret_str);
+        return NULL;
+    }
+
+    int num_partitions = hash_view_get_num_partitions(view);
+    char **partitions = hash_view_get_partitions(view);
+    for (int i=0;i<num_partitions;i++) {
+        tmp_str =
+            sqlite3_mprintf("%s\nUPDATE \"%w\" SET %s where rowid=old.__hidden__rowid;", ret_str, partitions[i], cols_str);
+        sqlite3_free(ret_str);
+        ret_str = tmp_str;
+    }
+    tmp_str = sqlite3_mprintf("%s\nEND;", ret_str);
+    sqlite3_free(ret_str);
+    ret_str = tmp_str;
+
+    errstat_set_rc(err, VIEW_NOERR);
+
+    dbg_verbose_sqlite("Generated update trigger:\n%s\n", ret_str);
+    return ret_str;
+
+oom:
+    if (ret_str)
+        free(ret_str);
+    errstat_set_rc(err, VIEW_ERR_MALLOC);
+    errstat_set_strf(err, "%s Malloc OOM", __func__);
+
+    return NULL;
+}
+
+char *hash_views_create_delete_trigger_query(hash_view_t *view, struct errstat *err)
+{
+    char *ret_str = NULL;
+    char *tmp_str = NULL;
+    const char *view_name = hash_view_get_viewname(view);
+
+    ret_str = sqlite3_mprintf("CREATE TRIGGER \"%w_%w\" INSTEAD OF DELETE ON \"%w\" BEGIN", view_name,
+                              TRIGGER_SUFFIX_DEL, view_name);
+    if (!ret_str) {
+        goto oom;
+    }
+    int num_partitions = hash_view_get_num_partitions(view);
+    char **partitions = hash_view_get_partitions(view);
+    for (int i=0;i<num_partitions;i++) {
+        tmp_str = sqlite3_mprintf("%s\nDELETE FROM \"%w\" where rowid=old.__hidden__rowid;", ret_str, partitions[i]);
+        sqlite3_free(ret_str);
+        ret_str = tmp_str;
+    }
+    tmp_str = sqlite3_mprintf("%s\nEND;", ret_str);
+    sqlite3_free(ret_str);
+    ret_str = tmp_str;
+
+    errstat_set_rc(err, VIEW_NOERR);
+
+    dbg_verbose_sqlite("Generated delete trigger:\n%s\n", ret_str);
+    return ret_str;
+
+oom:
+    errstat_set_rc(err, VIEW_ERR_MALLOC);
+    errstat_set_strf(err, "%s Malloc OOM", __func__);
+
+    return NULL;
+}
