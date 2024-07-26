@@ -91,6 +91,7 @@ struct comdb2_partition {
             char columns[MAXCOLUMNS][MAXCOLNAME];
             uint32_t keys[MAXPARTITIONS];
             char partitions[MAXPARTITIONS][MAXPARTITIONLEN];
+            char *createQuery;
         } hash;
     } u;
 };

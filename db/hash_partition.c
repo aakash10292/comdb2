@@ -2,6 +2,8 @@
 #include <plhash_glue.h>
 #include "views.h"
 #include "cson/cson.h"
+#include "schemachange.h"
+#include <regex.h>
 struct hash_view {
     char *viewname;
     char *tblname;
@@ -11,7 +13,7 @@ struct hash_view {
     char **partitions;
     int version;
 };
-
+extern char gbl_dbname[MAX_DBNAME_LENGTH];
 pthread_rwlock_t hash_partition_lk;
 const char *hash_view_get_viewname(struct hash_view *view)
 {
@@ -155,11 +157,15 @@ done:
 static int find_inmem_view(hash_t *hash_views, const char *name, hash_view_t **oView)
 {
     int rc = VIEW_NOERR;
+    hash_view_t *view = NULL;
     Pthread_rwlock_wrlock(&hash_partition_lk);
-    *oView = hash_find_readonly(hash_views, &name);
-    if (!(*oView)) {
+    view = hash_find_readonly(hash_views, &name);
+    if (!view) {
         rc = VIEW_ERR_NOTFOUND;
         goto done;
+    }
+    if (oView) {
+        *oView = view;
     }
 done:
     Pthread_rwlock_unlock(&hash_partition_lk);
@@ -451,4 +457,100 @@ done:
         free_hash_view(view);
     }
     return rc;
+}
+static int getDbHndl(cdb2_hndl_tp **hndl, const char *dbname, const char *tier) {
+    int rc;
+    
+    if (!tier) {
+        rc = cdb2_open(hndl, dbname, "localhost", CDB2_DIRECT_CPU);
+    } else {
+        rc = cdb2_open(hndl, dbname, tier, 0);
+    }
+    if (rc != 0) {
+        logmsg(LOGMSG_ERROR, "%s:%d Failed to connect to %s@%s (rc: %d)\n",
+                       __func__, __LINE__, gbl_dbname, "local", rc);
+        cdb2_close(*hndl);
+    }
+    return rc;
+}
+
+/* extract everything after "create table <tblname>"
+ * and before "partitioned by ("*/
+char *extractSchema(const char *insertQuery) {
+    const char *start = strchr(insertQuery, '('); // Find the first '('
+    const char *end = strchr(insertQuery, ')');   // Find the first ')'
+    char *result = NULL;
+    if (start != NULL && end != NULL && end > start) {
+        size_t length = end - start - 1; // Calculate the length of the substring
+        result = (char *)malloc(length + 1);         // Allocate memory for the result
+
+        strncpy(result, start + 1, length); // Copy the substring between parentheses
+        result[length] = '\0';              // Null-terminate the result
+
+        logmsg(LOGMSG_USER, "Extracted string: %s\n", result);
+    } else {
+        logmsg(LOGMSG_ERROR, "No match found\n");
+    }
+    return result;
+}
+
+/* Create an insert query against shards 
+ * create table tableName(...)
+ * */
+static char *getCreateStatement(const char *insertQuery, const char *tableName) {
+    const char *schema = extractSchema(insertQuery);
+    size_t createStatementLen = 13 + strlen(tableName) + strlen(schema) + 2 + 1; /* 13 -> "CREATE TABLE ", 2-> (, ) */
+    char *createStatement = (char *)malloc(createStatementLen);
+    strcpy(createStatement, "CREATE TABLE ");
+    strcat(createStatement, tableName);
+    strcat(createStatement, "(");
+    strcat(createStatement, schema);
+    strcat(createStatement, ")");
+    logmsg(LOGMSG_USER, "The create statment is %s\n", createStatement);
+    return createStatement;
+}
+
+int createRemoteTables(struct comdb2_partition *partition) {
+    cdb2_hndl_tp *hndl;
+    int rc;
+    int num_partitions = partition->u.hash.num_partitions;
+    for (int i = 0; i < num_partitions; i++) {
+        char *p = partition->u.hash.partitions[i];
+        char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL;
+        remoteDbName = strtok_r(p,".", &savePtr);
+        remoteTableName = strtok_r(NULL, ".", &savePtr);
+        if (remoteTableName == NULL) {
+            remoteTableName = remoteDbName;
+            remoteDbName = gbl_dbname;
+        }
+
+        logmsg(LOGMSG_USER, "The db is %s, the table is %s\n", remoteDbName, remoteTableName);
+
+        if (!strcmp(gbl_dbname, remoteDbName)) {
+            rc = getDbHndl(&hndl, gbl_dbname, NULL);
+        } else {
+            const char *tier = mach_class_class2name(get_my_mach_class());
+            if (!tier) {
+                logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
+                abort();
+            }
+            rc = getDbHndl(&hndl, remoteDbName, tier);
+        }
+        if (rc) {
+            return rc;
+        }
+
+        char *createStatement = getCreateStatement(partition->u.hash.createQuery, remoteTableName);
+        if (!createStatement) {
+            logmsg(LOGMSG_ERROR, "Failed to generate createQuery\n");
+        } else {
+            logmsg(LOGMSG_USER, "The generated create statement is %s\n", createStatement);
+        }
+
+        rc = cdb2_run_statement(hndl, createStatement);
+        if (rc) {
+            logmsg(LOGMSG_ERROR, "Failed to create table %s on database %s\n", remoteTableName, remoteDbName);
+        }
+    }
+    exit(0);
 }
