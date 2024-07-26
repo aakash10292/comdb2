@@ -28,6 +28,7 @@
 #include "db_access.h" /* gbl_check_access_controls */
 #include "comdb2_atomic.h"
 #include "alias.h"
+#include "dohsql.h"
 
 #define COMDB2_INVALID_AUTOINCREMENT "invalid datatype for autoincrement"
 
@@ -46,6 +47,7 @@ extern int sqlite3GetToken(const unsigned char *z, int *tokenType);
 extern int sqlite3ParserFallback(int iToken);
 extern int comdb2_save_ddl_context(char *name, void *ctx, comdb2ma mem);
 extern void *comdb2_get_ddl_context(char *name);
+int createRemoteTables(struct comdb2_partition *partition);
 /******************* Utility ****************************/
 
 static inline int setError(Parse *pParse, int rc, const char *msg)
@@ -196,6 +198,11 @@ static inline int chkAndCopyTable(Parse *pParse, char *dst, const char *name,
 
         if (db == NULL && (error_flag == ERROR_ON_TBL_NOT_FOUND)) {
             rc = setError(pParse, SQLITE_ERROR, "Table not found");
+            goto cleanup;
+        }
+
+        if (db == NULL && !hash_get_inmem_view(dst, NULL)) {
+            rc = setError(pParse, SQLITE_ERROR, "Table already exists");
             goto cleanup;
         }
 
@@ -7764,4 +7771,15 @@ void comdb2CreateHashPartition(Parse *pParse, IdList *pColumn, IdList *pPartitio
                                     partition->u.hash.partitions)) {
         free_ddl_context(pParse);
     }
+
+    GET_CLNT;
+    if (clnt && clnt->sql) {
+        logmsg(LOGMSG_USER, "The sql query is %s\n", clnt->sql);
+        partition->u.hash.createQuery = clnt->sql;
+    } else {
+        if (!clnt) {
+            logmsg(LOGMSG_USER, "The client object is not available\n");
+        }
+    }
+    createRemoteTables(partition);
 }
