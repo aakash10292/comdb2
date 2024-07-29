@@ -6532,10 +6532,8 @@ static int hash_sc_partition(const char *partition, struct schema_change_type *s
 static int _process_single_table_sc_hash_partitioning(struct ireq *iq)
 {
     struct schema_change_type *sc = iq->sc;
-    int rc, irc;
+    int rc;
     struct errstat err = {0};
-    char **partitions = NULL;
-    int num_partitions = 0;
     hash_view_t *view = NULL;
     assert(sc->partition.type == PARTITION_ADD_COL_HASH || sc->partition.type == PARTITION_REMOVE_COL_HASH);
 
@@ -6569,13 +6567,6 @@ static int _process_single_table_sc_hash_partitioning(struct ireq *iq)
     } else {
         iq->sc->sc_next = iq->sc_pending;
         iq->sc_pending = iq->sc;
-    }
-    num_partitions = hash_view_get_num_partitions(view);
-    partitions = hash_view_get_partitions(view);
-    /* Schemachange the individual partitions*/
-    irc=0;
-    for (int i=0;i<num_partitions && irc==0;i++) {
-        irc = hash_sc_partition(partitions[i], iq->sc);
     }
     iq->osql_flags |= OSQL_FLAGS_SCDONE;
     return rc;
