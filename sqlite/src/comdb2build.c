@@ -7753,7 +7753,6 @@ static int comdb2GetHashPartitionParams(Parse* pParse, IdList *pColumn, IdList *
 void comdb2CreateHashPartition(Parse *pParse, IdList *pColumn, IdList *pPartitions)
 {
     struct comdb2_partition *partition;
-
     if (!gbl_partitioned_table_enabled) {
         setError(pParse, SQLITE_ABORT, "Create partitioned table not enabled");
         return;
@@ -7770,6 +7769,7 @@ void comdb2CreateHashPartition(Parse *pParse, IdList *pColumn, IdList *pPartitio
                                     (uint32_t*)&partition->u.hash.num_columns,
                                     partition->u.hash.partitions)) {
         free_ddl_context(pParse);
+        return;
     }
 
     GET_CLNT;
@@ -7779,7 +7779,11 @@ void comdb2CreateHashPartition(Parse *pParse, IdList *pColumn, IdList *pPartitio
     } else {
         if (!clnt) {
             logmsg(LOGMSG_USER, "The client object is not available\n");
+            abort();
         }
     }
-    createRemoteTables(partition);
+    if (createRemoteTables(partition)) {
+        free_ddl_context(pParse);
+        setError(pParse, SQLITE_ABORT, "Failed to create remote tables"); 
+    }
 }
