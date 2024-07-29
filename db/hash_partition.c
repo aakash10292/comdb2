@@ -510,13 +510,77 @@ static char *getCreateStatement(const char *insertQuery, const char *tableName) 
     return createStatement;
 }
 
+static char *getDropStatement(const char *tableName) {
+    size_t dropStatementLen = 21 + strlen(tableName) + 1;  /* 11-> "DROP TABLE IF EXISTS "*/
+    char *dropStatement = (char *)malloc(dropStatementLen);
+    strcpy(dropStatement, "DROP TABLE IF EXISTS ");
+    strcat(dropStatement, tableName);
+    logmsg(LOGMSG_USER, "The drop statemetn is %s\n", dropStatement);
+    return dropStatement;
+}
+
+/*
+ */
+void deleteRemoteTables(struct comdb2_partition *partition, int startIdx) {
+    cdb2_hndl_tp *hndl;
+    int rc;
+    char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL;
+    int i;
+    for(i = startIdx; i >= 0; i--) {
+        char *p = partition->u.hash.partitions[i];
+        remoteDbName = strtok_r(p,".", &savePtr);
+        remoteTableName = strtok_r(NULL, ".", &savePtr);
+        if (remoteTableName == NULL) {
+            remoteTableName = remoteDbName;
+            remoteDbName = gbl_dbname;
+        }
+        logmsg(LOGMSG_USER, "The db is %s, the table is %s\n", remoteDbName, remoteTableName);
+
+        if (!strcmp(gbl_dbname, remoteDbName)) {
+            rc = getDbHndl(&hndl, gbl_dbname, NULL);
+        } else {
+            const char *tier = mach_class_class2name(get_my_mach_class());
+            if (!tier) {
+                logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
+                abort();
+            }
+            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);
+            rc = getDbHndl(&hndl, remoteDbName, tier);
+        }
+        if (rc) {
+            logmsg(LOGMSG_ERROR, "Failed to get handle. rc: %d, err: %s\n", rc, cdb2_errstr(hndl));
+            logmsg(LOGMSG_ERROR, "Failed to drop table %s on remote db %s\n", remoteDbName, remoteTableName);
+            goto cleanup;
+        }
+        char *dropStatement = getDropStatement(remoteTableName);
+        if (!dropStatement) {
+            logmsg(LOGMSG_ERROR, "Failed to generate drop Query\n");
+            logmsg(LOGMSG_ERROR, "Failed to drop table %s on remote db %s\n", remoteDbName, remoteTableName);
+            goto close_handle;
+        } else {
+            logmsg(LOGMSG_USER, "The generated drop statement is %s\n", dropStatement);
+        }
+
+        rc = cdb2_run_statement(hndl, dropStatement);
+        if (rc) {
+            logmsg(LOGMSG_ERROR, "Failed to drop table %s on database %s. rc: %d, err: %s\n", remoteTableName, remoteDbName, rc, cdb2_errstr(hndl));
+        }
+close_handle:
+        cdb2_close(hndl);
+cleanup:
+        free(remoteDbName);
+        free(remoteTableName);
+    }
+}
+
 int createRemoteTables(struct comdb2_partition *partition) {
     cdb2_hndl_tp *hndl;
     int rc;
     int num_partitions = partition->u.hash.num_partitions;
-    for (int i = 0; i < num_partitions; i++) {
-        char *p = partition->u.hash.partitions[i];
-        char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL;
+    int i;
+    char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL, *p = NULL;
+    for (i = 0; i < num_partitions; i++) {
+        p = strdup(partition->u.hash.partitions[i]);
         remoteDbName = strtok_r(p,".", &savePtr);
         remoteTableName = strtok_r(NULL, ".", &savePtr);
         if (remoteTableName == NULL) {
@@ -534,10 +598,11 @@ int createRemoteTables(struct comdb2_partition *partition) {
                 logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
                 abort();
             }
+            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);
             rc = getDbHndl(&hndl, remoteDbName, tier);
         }
         if (rc) {
-            return rc;
+            goto cleanup_tables;
         }
 
         char *createStatement = getCreateStatement(partition->u.hash.createQuery, remoteTableName);
@@ -549,8 +614,19 @@ int createRemoteTables(struct comdb2_partition *partition) {
 
         rc = cdb2_run_statement(hndl, createStatement);
         if (rc) {
-            logmsg(LOGMSG_ERROR, "Failed to create table %s on database %s\n", remoteTableName, remoteDbName);
+            logmsg(LOGMSG_ERROR, "Failed to create table %s on database %s. rc: %d, err: %s\n", remoteTableName, remoteDbName, rc, cdb2_errstr(hndl));
+            goto cleanup_tables;
         }
+        cdb2_close(hndl);
+        free(p);
     }
-    exit(0);
+    return 0;
+cleanup_tables:
+    /* close most recent handle*/
+    cdb2_close(hndl);
+    free(p);
+    free(remoteDbName);
+    free(remoteTableName);
+    deleteRemoteTables(partition, i);
+    return -1;
 }
