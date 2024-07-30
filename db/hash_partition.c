@@ -625,8 +625,6 @@ cleanup_tables:
     /* close most recent handle*/
     cdb2_close(hndl);
     free(p);
-    free(remoteDbName);
-    free(remoteTableName);
     deleteRemoteTables(partition, i);
     return -1;
 }
