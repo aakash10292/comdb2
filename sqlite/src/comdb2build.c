@@ -7738,14 +7738,14 @@ static int comdb2GetHashPartitionParams(Parse* pParse, IdList *pColumn, IdList *
             return -1;
         } else {
             // column exists, copy it
-            strncpy0(cols[i], pColumn->a[i].zName, sizeof(pColumn->a[i].zName) + 1);
+            strncpy0(cols[i], pColumn->a[i].zName, strlen(pColumn->a[i].zName) + 1);
         }
     }
 
     /*Copy the table partition names*/
     *oNumPartitions = pPartitions->nId;
     for(i=0;i<pPartitions->nId;i++) {
-        strncpy0(partitions[i], pPartitions->a[i].zName, sizeof(pPartitions->a[i].zName)+1);
+        strncpy0(partitions[i], pPartitions->a[i].zName, strlen(pPartitions->a[i].zName)+1);
     }
     return 0;
 }
