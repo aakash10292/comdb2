@@ -51,7 +51,7 @@ typedef enum scdone {
     add_queue_file,          // 22
     del_queue_file,          // 23
     alias_table,             // 24
-    alias                    // 25
+    alias,                   // 25
     hash_views               // 25
 } scdone_t;
 

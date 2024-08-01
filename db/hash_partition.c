@@ -4,6 +4,7 @@
 #include "cson/cson.h"
 #include "schemachange.h"
 #include <regex.h>
+#include "consistent_hash.h"
 struct hash_view {
     char *viewname;
     char *tblname;
@@ -12,6 +13,7 @@ struct hash_view {
     int num_partitions;
     char **partitions;
     int version;
+    ch_hash_t *partition_hash;
 };
 extern char gbl_dbname[MAX_DBNAME_LENGTH];
 pthread_rwlock_t hash_partition_lk;
@@ -67,6 +69,9 @@ static void free_hash_view(hash_view_t *mView)
             }
             free(mView->partitions);
         }
+        if (mView->partition_hash) {
+            ch_hash_free(mView->partition_hash);
+        }
         free(mView);
     }
 }
@@ -117,6 +122,20 @@ hash_view_t *create_hash_view(const char *viewname, const char *tablename, uint3
         if (!mView->partitions[i]) {
             goto oom;
         }
+    }
+
+    ch_hash_t *ch = ch_hash_create(mView->num_partitions, ch_hash_sha);
+    mView->partition_hash = ch;
+    if (!mView->partition_hash) {
+        logmsg(LOGMSG_ERROR, "Failed create consistent_hash\n");
+        goto oom;
+    }
+
+    for(int i=0;i<mView->num_partitions;i++){
+        if (ch_hash_add_node(ch, (uint8_t *)mView->partitions[i], strlen(mView->partitions[i]), ch->key_hashes[i]->hash_val)) {
+        logmsg(LOGMSG_ERROR, "Failed to add node %s\n", mView->partitions[i]);
+            goto oom;
+                }
     }
 
     return mView;
