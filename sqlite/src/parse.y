@@ -1823,11 +1823,13 @@ trigger_cmd_list(A) ::= trigger_cmd(A) SEMI. {
 //
 %type trnm {Token}
 trnm(A) ::= nm(A).
-trnm(A) ::= nm DOT nm(X). {
+trnm(A) ::= nm(DB) DOT nm(X). {
+%ifndef SQLITE_BUILDING_FOR_COMDB2
   A = X;
   sqlite3ErrorMsg(pParse, 
         "qualified table names are not allowed on INSERT, UPDATE, and DELETE "
         "statements within triggers");
+%endif SQLITE_BUILDING_FOR_COMDB2
 }
 
 // Disallow the INDEX BY and NOT INDEXED clauses on UPDATE and DELETE

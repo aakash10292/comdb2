@@ -254,7 +254,7 @@ char *hash_views_create_insert_trigger_query(hash_view_t *view, struct errstat *
     int num_partitions = hash_view_get_num_partitions(view);
     char **partitions = hash_view_get_partitions(view);
     for (int i=0;i<num_partitions;i++) {
-        tmp_str = sqlite3_mprintf("%s\nINSERT INTO \"%w\" VALUES ( %s );\n", ret_str, partitions[i], cols_str);
+        tmp_str = sqlite3_mprintf("%s\nINSERT INTO %s VALUES ( %s );\n", ret_str, partitions[i], cols_str);
         ret_str = tmp_str;
     }
 
@@ -301,7 +301,7 @@ char *hash_views_create_update_trigger_query(hash_view_t *view, struct errstat *
     char **partitions = hash_view_get_partitions(view);
     for (int i=0;i<num_partitions;i++) {
         tmp_str =
-            sqlite3_mprintf("%s\nUPDATE \"%w\" SET %s where rowid=old.__hidden__rowid;", ret_str, partitions[i], cols_str);
+            sqlite3_mprintf("%s\nUPDATE %s SET %s where rowid=old.__hidden__rowid;", ret_str, partitions[i], cols_str);
         sqlite3_free(ret_str);
         ret_str = tmp_str;
     }
@@ -337,7 +337,7 @@ char *hash_views_create_delete_trigger_query(hash_view_t *view, struct errstat *
     int num_partitions = hash_view_get_num_partitions(view);
     char **partitions = hash_view_get_partitions(view);
     for (int i=0;i<num_partitions;i++) {
-        tmp_str = sqlite3_mprintf("%s\nDELETE FROM \"%w\" where rowid=old.__hidden__rowid;", ret_str, partitions[i]);
+        tmp_str = sqlite3_mprintf("%s\nDELETE FROM %s where rowid=old.__hidden__rowid;", ret_str, partitions[i]);
         sqlite3_free(ret_str);
         ret_str = tmp_str;
     }
