@@ -17,6 +17,7 @@ struct hash_view {
 };
 extern char gbl_dbname[MAX_DBNAME_LENGTH];
 pthread_rwlock_t hash_partition_lk;
+int gbl_sharding_local = 1;
 const char *hash_view_get_viewname(struct hash_view *view)
 {
     return view->viewname;
@@ -544,6 +545,7 @@ void deleteRemoteTables(struct comdb2_partition *partition, int startIdx) {
     cdb2_hndl_tp *hndl;
     int rc;
     char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL;
+    // char *tier = NULL; 
     int i;
     for(i = startIdx; i >= 0; i--) {
         char *p = partition->u.hash.partitions[i];
@@ -558,13 +560,17 @@ void deleteRemoteTables(struct comdb2_partition *partition, int startIdx) {
         if (!strcmp(gbl_dbname, remoteDbName)) {
             rc = getDbHndl(&hndl, gbl_dbname, NULL);
         } else {
-            const char *tier = mach_class_class2name(get_my_mach_class());
+            /*if (gbl_sharding_local) {
+                tier = "local";
+            } else {
+                tier = (char *)mach_class_class2name(get_my_mach_class());
+            }
             if (!tier) {
                 logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
                 abort();
             }
-            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);
-            rc = getDbHndl(&hndl, remoteDbName, tier);
+            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);*/
+            rc = getDbHndl(&hndl, remoteDbName, "local");
         }
         if (rc) {
             logmsg(LOGMSG_ERROR, "Failed to get handle. rc: %d, err: %s\n", rc, cdb2_errstr(hndl));
@@ -612,13 +618,13 @@ int createRemoteTables(struct comdb2_partition *partition) {
         if (!strcmp(gbl_dbname, remoteDbName)) {
             rc = getDbHndl(&hndl, gbl_dbname, NULL);
         } else {
-            const char *tier = mach_class_class2name(get_my_mach_class());
+            /*const char *tier = mach_class_class2name(get_my_mach_class());
             if (!tier) {
                 logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
                 abort();
             }
-            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);
-            rc = getDbHndl(&hndl, remoteDbName, tier);
+            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);*/
+            rc = getDbHndl(&hndl, remoteDbName, "local");
         }
         if (rc) {
             goto cleanup_tables;
