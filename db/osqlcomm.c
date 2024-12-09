@@ -6559,8 +6559,7 @@ static int _process_single_table_sc_hash_partitioning(struct ireq *iq)
     sc->publish = partition_publish;
     sc->unpublish = partition_unpublish;
 
-    /* schema change for a regular table */
-    rc = start_schema_change_tran(iq, NULL);
+    /*rc = start_schema_change_tran(iq, NULL);
     if ((rc != SC_ASYNC && rc != SC_COMMIT_PENDING) || sc->preempted == SC_ACTION_RESUME ||
         sc->kind == SC_ALTERTABLE_PENDING) {
         iq->sc = NULL;
@@ -6569,7 +6568,8 @@ static int _process_single_table_sc_hash_partitioning(struct ireq *iq)
         iq->sc_pending = iq->sc;
     }
     iq->osql_flags |= OSQL_FLAGS_SCDONE;
-    return rc;
+    return rc;*/
+    return _process_single_table_sc(iq);
 }
 
 static int _process_single_table_sc_partitioning(struct ireq *iq) 

@@ -48,6 +48,7 @@ extern int sqlite3ParserFallback(int iToken);
 extern int comdb2_save_ddl_context(char *name, void *ctx, comdb2ma mem);
 extern void *comdb2_get_ddl_context(char *name);
 int createRemoteTables(struct comdb2_partition *partition);
+int createLocalAliases(struct comdb2_partition *partition);
 /******************* Utility ****************************/
 
 static inline int setError(Parse *pParse, int rc, const char *msg)
@@ -7785,5 +7786,10 @@ void comdb2CreateHashPartition(Parse *pParse, IdList *pColumn, IdList *pPartitio
     if (createRemoteTables(partition)) {
         free_ddl_context(pParse);
         setError(pParse, SQLITE_ABORT, "Failed to create remote tables"); 
+    }
+
+    if (createLocalAliases(partition)) {
+        free_ddl_context(pParse);
+        setError(pParse, SQLITE_ABORT, "Failed to create local aliases for remote tables"); 
     }
 }

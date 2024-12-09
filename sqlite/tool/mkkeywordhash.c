@@ -235,9 +235,6 @@ static Keyword aKeywordTable[] = {
   { "GROUP",            "TK_GROUP",        ALWAYS                 },
   { "GROUPS",           "TK_GROUPS",       WINDOWFUNC             },
   { "HAVING",           "TK_HAVING",       ALWAYS                 },
-#if defined(SQLITE_BUILDING_FOR_COMDB2)
-  { "HASH",             "TK_HASH",         ALWAYS                 },
-#endif
   { "IF",               "TK_IF",           ALWAYS                 },
   { "IGNORE",           "TK_IGNORE",       CONFLICT|TRIGGER       },
   { "IMMEDIATE",        "TK_IMMEDIATE",    ALWAYS                 },
