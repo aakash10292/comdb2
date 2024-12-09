@@ -18,6 +18,7 @@ struct hash_view {
 extern char gbl_dbname[MAX_DBNAME_LENGTH];
 pthread_rwlock_t hash_partition_lk;
 int gbl_sharding_local = 1;
+void dump_alias_info();
 const char *hash_view_get_viewname(struct hash_view *view)
 {
     return view->viewname;
@@ -545,7 +546,7 @@ void deleteRemoteTables(struct comdb2_partition *partition, int startIdx) {
     cdb2_hndl_tp *hndl;
     int rc;
     char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL;
-    // char *tier = NULL; 
+    char *tier = NULL; 
     int i;
     for(i = startIdx; i >= 0; i--) {
         char *p = partition->u.hash.partitions[i];
@@ -560,7 +561,7 @@ void deleteRemoteTables(struct comdb2_partition *partition, int startIdx) {
         if (!strcmp(gbl_dbname, remoteDbName)) {
             rc = getDbHndl(&hndl, gbl_dbname, NULL);
         } else {
-            /*if (gbl_sharding_local) {
+            if (gbl_sharding_local) {
                 tier = "local";
             } else {
                 tier = (char *)mach_class_class2name(get_my_mach_class());
@@ -569,8 +570,8 @@ void deleteRemoteTables(struct comdb2_partition *partition, int startIdx) {
                 logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
                 abort();
             }
-            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);*/
-            rc = getDbHndl(&hndl, remoteDbName, "local");
+            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);
+            rc = getDbHndl(&hndl, remoteDbName, tier);
         }
         if (rc) {
             logmsg(LOGMSG_ERROR, "Failed to get handle. rc: %d, err: %s\n", rc, cdb2_errstr(hndl));
@@ -603,6 +604,7 @@ int createRemoteTables(struct comdb2_partition *partition) {
     int rc;
     int num_partitions = partition->u.hash.num_partitions;
     int i;
+    char *tier = NULL; 
     char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL, *p = NULL;
     for (i = 0; i < num_partitions; i++) {
         p = strdup(partition->u.hash.partitions[i]);
@@ -618,13 +620,23 @@ int createRemoteTables(struct comdb2_partition *partition) {
         if (!strcmp(gbl_dbname, remoteDbName)) {
             rc = getDbHndl(&hndl, gbl_dbname, NULL);
         } else {
+            if (gbl_sharding_local) {
+                tier = "local";
+            } else {
+                tier = (char *)mach_class_class2name(get_my_mach_class());
+            }
+            if (!tier) {
+                logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
+                abort();
+            }
+            logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);
+            rc = getDbHndl(&hndl, remoteDbName, tier);
             /*const char *tier = mach_class_class2name(get_my_mach_class());
             if (!tier) {
                 logmsg(LOGMSG_ERROR, "Failed to get tier for remotedb %s\n", p);
                 abort();
             }
             logmsg(LOGMSG_USER, "GOT THE TIER AS %s\n", tier);*/
-            rc = getDbHndl(&hndl, remoteDbName, "local");
         }
         if (rc) {
             goto cleanup_tables;
@@ -651,5 +663,64 @@ cleanup_tables:
     cdb2_close(hndl);
     free(p);
     deleteRemoteTables(partition, i);
+    return -1;
+}
+
+
+int createLocalAliases(struct comdb2_partition *partition) {
+    cdb2_hndl_tp *hndl;
+    int rc;
+    int num_partitions = partition->u.hash.num_partitions;
+    int i;
+    char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL, *p = NULL;
+    /* get handle to local db*/
+    rc = getDbHndl(&hndl, gbl_dbname, NULL);
+    if (rc) {
+        goto cleanup_aliases;
+    }
+    for (i = 0; i < num_partitions; i++) {
+        p = strdup(partition->u.hash.partitions[i]);
+        remoteDbName = strtok_r(p,".", &savePtr);
+        remoteTableName = strtok_r(NULL, ".", &savePtr);
+        if (remoteTableName == NULL) {
+            remoteTableName = remoteDbName;
+            remoteDbName = gbl_dbname;
+        }
+
+        logmsg(LOGMSG_USER, "The db is %s, the table is %s\n", remoteDbName, remoteTableName);
+
+        char localAlias[MAXPARTITIONLEN+1]; /* remoteDbName_remoteTableName */
+        char createAliasStatement[MAXPARTITIONLEN*2+3+10+1]; /* 3->spaces 8->'PUT ALIAS' */
+        rc = snprintf(localAlias, sizeof(localAlias), "%s_%s", remoteDbName, remoteTableName);
+        if (!rc) {
+            logmsg(LOGMSG_ERROR, "Failed to generate local alias name. rc: %d %s\n", rc, localAlias);
+            goto cleanup_aliases;
+        } else {
+            logmsg(LOGMSG_ERROR, "The generated alias is %s\n", localAlias);
+        }
+        rc = snprintf(createAliasStatement,sizeof(createAliasStatement), "PUT ALIAS %s '%s.%s'", localAlias, remoteDbName, remoteTableName);
+        if (!rc) {
+            logmsg(LOGMSG_ERROR, "Failed to generate create alias query\n");
+            goto cleanup_aliases;
+        } else {
+            logmsg(LOGMSG_USER, "The generated create statement for Alias is %s\n", createAliasStatement);
+        }
+
+        rc = cdb2_run_statement(hndl, createAliasStatement);
+        if (rc) {
+            logmsg(LOGMSG_ERROR, "Failed to create alias %s on database %s. rc: %d, err: %s\n", remoteTableName, remoteDbName, rc, cdb2_errstr(hndl));
+            goto cleanup_aliases;
+        }
+        free(p);
+    }
+    dump_alias_info();
+    cdb2_close(hndl);
+    return 0;
+cleanup_aliases:
+    /* close most recent handle*/
+    cdb2_close(hndl);
+    free(p);
+    /* TODO : IMPLEMENT BELOW */
+    //deleteLocalAliases(partition, i);
     return -1;
 }

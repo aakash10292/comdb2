@@ -232,6 +232,8 @@ char *_views_destroy_insert_trigger_query(const char *view_name,
     return _views_destroy_trigger_query(view_name, err, "ins", "insert");
 }
 
+char *get_alias(const char *);
+
 char *hash_views_create_insert_trigger_query(hash_view_t *view, struct errstat *err)
 {
     char *ret_str = NULL;
@@ -254,7 +256,13 @@ char *hash_views_create_insert_trigger_query(hash_view_t *view, struct errstat *
     int num_partitions = hash_view_get_num_partitions(view);
     char **partitions = hash_view_get_partitions(view);
     for (int i=0;i<num_partitions;i++) {
-        tmp_str = sqlite3_mprintf("%s\nINSERT INTO %s VALUES ( %s );\n", ret_str, partitions[i], cols_str);
+        char *localAlias = get_alias(partitions[i]);
+        if (!localAlias) {
+            logmsg(LOGMSG_ERROR, "Alias not found for %s\n", partitions[i]);
+            abort();
+        }
+        tmp_str = sqlite3_mprintf("%s\nINSERT INTO %s VALUES ( %s );\n", ret_str, localAlias, cols_str);
+        sqlite3_free(ret_str);
         ret_str = tmp_str;
     }
 
@@ -300,9 +308,15 @@ char *hash_views_create_update_trigger_query(hash_view_t *view, struct errstat *
     int num_partitions = hash_view_get_num_partitions(view);
     char **partitions = hash_view_get_partitions(view);
     for (int i=0;i<num_partitions;i++) {
+        char *localAlias = get_alias(partitions[i]);
+        if (!localAlias) {
+            logmsg(LOGMSG_ERROR, "Alias not found for %s\n", partitions[i]);
+            abort();
+        }
         tmp_str =
-            sqlite3_mprintf("%s\nUPDATE %s SET %s where rowid=old.__hidden__rowid;", ret_str, partitions[i], cols_str);
+            sqlite3_mprintf("%s\nUPDATE %s SET %s where rowid=old.__hidden__rowid;", ret_str, localAlias, cols_str);
         sqlite3_free(ret_str);
+        free(localAlias);
         ret_str = tmp_str;
     }
     tmp_str = sqlite3_mprintf("%s\nEND;", ret_str);
@@ -337,8 +351,14 @@ char *hash_views_create_delete_trigger_query(hash_view_t *view, struct errstat *
     int num_partitions = hash_view_get_num_partitions(view);
     char **partitions = hash_view_get_partitions(view);
     for (int i=0;i<num_partitions;i++) {
-        tmp_str = sqlite3_mprintf("%s\nDELETE FROM %s where rowid=old.__hidden__rowid;", ret_str, partitions[i]);
+        char *localAlias = get_alias(partitions[i]);
+        if (!localAlias) {
+            logmsg(LOGMSG_ERROR, "Alias not found for %s\n", partitions[i]);
+            abort();
+        }
+        tmp_str = sqlite3_mprintf("%s\nDELETE FROM %s where rowid=old.__hidden__rowid;", ret_str, localAlias);
         sqlite3_free(ret_str);
+        free(localAlias);
         ret_str = tmp_str;
     }
     tmp_str = sqlite3_mprintf("%s\nEND;", ret_str);
