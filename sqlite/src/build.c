@@ -426,6 +426,7 @@ Table *sqlite3FindTable(sqlite3 *db, const char *zName, const char *zDatabase){
   assert( zName!=0 );
 
 retry_alias:
+  logmsg(LOGMSG_USER, "%s zName: %s, czDatabase: %s\n", __func__, zName, czDatabase);
   dbName = fdb_parse_comdb2_remote_dbname(zDatabase, &fqDbname);
 
   already_searched_fdb = 0;
@@ -685,6 +686,9 @@ Table *sqlite3LocateTable(
   }
 
   p = sqlite3FindTable(db, zName, zDbase);
+  if ( p==0 ) {
+      p = sqlite3FindTable(db, zName, NULL);
+  }
   if( p==0 ){
 #ifndef SQLITE_OMIT_VIRTUALTABLE
     /* If zName is the not the name of a table in the schema created using
@@ -719,6 +723,7 @@ Table *sqlite3LocateTable(
     p = 0;
   }
 
+  /* This could be an alias */
   if( p==0 ){
     const char *zMsg = flags & LOCATE_VIEW ? "no such view" : "no such table";
     if( zDbase ){
@@ -754,8 +759,10 @@ Table *sqlite3LocateTableItem(
   if( p->pSchema ){
     int iDb = sqlite3SchemaToIndex(pParse->db, p->pSchema);
     zDb = pParse->db->aDb[iDb].zDbSName;
+      logmsg(LOGMSG_USER, "%s:%d dbname is %s\n", __func__, __LINE__, zDb); 
   }else{
     zDb = p->zDatabase;
+      logmsg(LOGMSG_USER, "%s:%d dbname is %s\n", __func__, __LINE__, zDb); 
   }
 #if defined(SQLITE_BUILDING_FOR_COMDB2)
   if( gbl_allow_user_schema ){
