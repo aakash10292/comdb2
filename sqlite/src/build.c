@@ -431,7 +431,6 @@ Table *sqlite3FindTable(sqlite3 *db, const char *zName, const char *zDatabase){
   assert( zName!=0 );
 
 retry_alias:
-  logmsg(LOGMSG_USER, "%s zName: %s, czDatabase: %s\n", __func__, zName, czDatabase);
   dbName = fdb_parse_comdb2_remote_dbname(zDatabase, &fqDbname);
 
   already_searched_fdb = 0;
@@ -694,6 +693,10 @@ Table *sqlite3LocateTable(
   }
 
   p = sqlite3FindTable(db, zName, zDbase);
+  /* I have to do a second lookup here for generic sharding : 
+   * zDbase is being set to "main" for inserts/deletes/updates from triggers"
+   * which results in the alias for the remote table not being found 
+   * AAR: TODO -> figure out the actual cause of the problem*/
   if ( p==0 ) {
       p = sqlite3FindTable(db, zName, NULL);
   }
@@ -731,7 +734,6 @@ Table *sqlite3LocateTable(
     p = 0;
   }
 
-  /* This could be an alias */
   if( p==0 ){
     const char *zMsg = flags & LOCATE_VIEW ? "no such view" : "no such table";
     if( zDbase ){
@@ -767,10 +769,8 @@ Table *sqlite3LocateTableItem(
   if( p->pSchema ){
     int iDb = sqlite3SchemaToIndex(pParse->db, p->pSchema);
     zDb = pParse->db->aDb[iDb].zDbSName;
-      logmsg(LOGMSG_USER, "%s:%d dbname is %s\n", __func__, __LINE__, zDb); 
   }else{
     zDb = p->zDatabase;
-      logmsg(LOGMSG_USER, "%s:%d dbname is %s\n", __func__, __LINE__, zDb); 
   }
 #if defined(SQLITE_BUILDING_FOR_COMDB2)
   if( gbl_allow_user_schema ){
