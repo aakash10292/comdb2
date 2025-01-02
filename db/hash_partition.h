@@ -26,6 +26,7 @@ hash_t *hash_create_all_views();
 int hash_views_update_replicant(void *tran, const char *name);
 int hash_get_inmem_view(const char *name, hash_view_t **oView);
 int is_hash_partition(const char *name);
+int is_hash_partition_table(const char *tablename, hash_view_t **oView);
 unsigned long long hash_view_get_version(const char *name);
 #endif
 
