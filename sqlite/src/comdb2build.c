@@ -845,7 +845,8 @@ out:
 void comdb2DropTable(Parse *pParse, SrcList *pName)
 {
     char *partition_first_shard = NULL;
-
+    int isHashPartition = 0;
+    char *viewName = NULL;
     if (comdb2IsPrepareOnly(pParse))
         return;
 
@@ -869,7 +870,7 @@ void comdb2DropTable(Parse *pParse, SrcList *pName)
     Token table = {pName->a[0].zName, strlen(pName->a[0].zName)};
     if (chkAndCopyTableTokens(pParse, sc->tablename, &table, 0,
                               ERROR_ON_TBL_NOT_FOUND, 1, 0,
-                              &partition_first_shard))
+                              &partition_first_shard) && !(isHashPartition=is_hash_partition(pName->a[0].zName)))
         goto out;
 
     sc->same_schema = 1;
@@ -887,6 +888,24 @@ void comdb2DropTable(Parse *pParse, SrcList *pName)
     if (partition_first_shard)
         sc->partition.type = PARTITION_REMOVE;
 
+    if (isHashPartition) {
+        sc->partition.type = PARTITION_REMOVE_COL_HASH; 
+        viewName = strndup(table.z, table.n);
+        if (viewName == NULL) {
+            setError(pParse, SQLITE_NOMEM, "System out of memory");
+            goto out;
+        }
+        sqlite3Dequote(viewName);
+        /*fetch in-mem view*/
+        hash_view_t *view = NULL;
+        if (hash_get_inmem_view(viewName, &view)) {
+            setError(pParse, SQLITE_ERROR, "Couldn't find hash partition");
+            goto out;
+        }
+        /* Remove quotes (if any). */
+        strncpy0(sc->tablename, hash_view_get_tablename(view), MAXTABLELEN);
+        logmsg(LOGMSG_USER, "SC->TABLENAME is %s\n", sc->tablename);
+    }
     tran_type *tran = curtran_gettran();
     int rc = get_csc2_file_tran(partition_first_shard ? partition_first_shard :
                                 sc->tablename, -1 , &sc->newcsc2, NULL, tran);
@@ -898,6 +917,12 @@ void comdb2DropTable(Parse *pParse, SrcList *pName)
         setError(pParse, SQLITE_ERROR, "Table schema cannot be found");
         goto out;
     }
+
+    /* We've validated schema file */
+    if (isHashPartition) {
+        strncpy0(sc->tablename, viewName, MAXTABLELEN);
+    }
+    logmsg(LOGMSG_USER, "%s DROPPING TABLE %s. partition type : %d\n", __func__, sc->tablename, sc->partition.type);
     if(sc->dryrun)
         comdb2prepareSString(v, pParse, 0,  sc, &comdb2SqlDryrunSchemaChange,
                             (vdbeFuncArgFree)  &free_schema_change_type);
@@ -905,6 +930,7 @@ void comdb2DropTable(Parse *pParse, SrcList *pName)
         comdb2PrepareSC(v, pParse, 0, sc, &comdb2SqlSchemaChange_usedb,
                         (vdbeFuncArgFree)&free_schema_change_type);
     free(partition_first_shard);
+    free(viewName);
     return;
 
 out:

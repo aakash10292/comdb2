@@ -211,6 +211,25 @@ int is_hash_partition(const char *name)
     return v != NULL;
 }
 
+/* check if table is part of a hash partition*/
+int is_hash_partition_table(const char *tablename, hash_view_t **oView) {
+    void *ent;
+    unsigned int bkt;
+    hash_view_t *view = NULL;
+    Pthread_rwlock_rdlock(&hash_partition_lk);
+    for (view = (hash_view_t *)hash_first(thedb->hash_partition_views, &ent, &bkt);view;
+            view = (hash_view_t *)hash_next(thedb->hash_partition_views, &ent, &bkt)) {
+        int n = hash_view_get_num_partitions(view);
+        for(int i=0;i<n;i++){
+            if (strcmp(tablename, view->partitions[i])==0) goto found;
+        }
+    }
+found:
+    *oView = view;
+    Pthread_rwlock_unlock(&hash_partition_lk);
+    return view!=NULL;
+}
+
 unsigned long long hash_view_get_version(const char *name)
 {
     struct hash_view *v = NULL;
@@ -665,13 +684,63 @@ cleanup_tables:
     deleteRemoteTables(partition, i);
     return -1;
 }
+int remove_alias(const char *);
+void deleteLocalAliases(struct comdb2_partition *partition, int startIdx) {
+    int i, rc;
+    cdb2_hndl_tp *hndl;
+    char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL, *p = NULL;
+    /* get handle to local db*/
+    rc = getDbHndl(&hndl, gbl_dbname, NULL);
+    if (rc) {
+        goto fatal;
+    }
+    for(i = startIdx; i >= 0; i--) {
+        p = strdup(partition->u.hash.partitions[i]);
+        remoteDbName = strtok_r(p,".", &savePtr);
+        remoteTableName = strtok_r(NULL, ".", &savePtr);
+        if (remoteTableName == NULL) {
+            remoteTableName = remoteDbName;
+            remoteDbName = gbl_dbname;
+        }
 
+        logmsg(LOGMSG_USER, "The db is %s, the table is %s\n", remoteDbName, remoteTableName);
+
+        char localAlias[MAXPARTITIONLEN+1]; /* remoteDbName_remoteTableName */
+        char deleteAliasStatement[MAXPARTITIONLEN*2+3+10+1]; /* 3->spaces 8->'PUT ALIAS' 1 */
+        rc = snprintf(localAlias, sizeof(localAlias), "%s_%s", remoteDbName, remoteTableName);
+        if (!rc) {
+            logmsg(LOGMSG_ERROR, "Failed to generate local alias name. rc: %d %s\n", rc, localAlias);
+            goto fatal;
+        } else {
+            logmsg(LOGMSG_ERROR, "The generated alias is %s\n", localAlias);
+        }
+        rc = snprintf(deleteAliasStatement,sizeof(deleteAliasStatement), "PUT ALIAS %s ''", localAlias);
+        // drop the alias
+        if (!rc) {
+            logmsg(LOGMSG_ERROR, "Failed to generate delete alias query\n");
+            goto fatal;
+        } else {
+            logmsg(LOGMSG_USER, "The generated delete statement for Alias is %s\n", deleteAliasStatement);
+        }
+
+        rc = cdb2_run_statement(hndl, deleteAliasStatement);
+        if (rc) {
+            logmsg(LOGMSG_ERROR, "Failed to delete alias %s on database %s. rc: %d, err: %s\n", remoteTableName, remoteDbName, rc, cdb2_errstr(hndl));
+            goto fatal;
+        }
+        free(p);
+    }
+    return;
+fatal:
+    cdb2_close(hndl);
+    logmsg(LOGMSG_FATAL, "Failed to drop alias while undoing create partition failure!! Giving up..\n");
+}
 
 int createLocalAliases(struct comdb2_partition *partition) {
     cdb2_hndl_tp *hndl;
     int rc;
     int num_partitions = partition->u.hash.num_partitions;
-    int i;
+    int i=0;
     char *savePtr = NULL, *remoteDbName = NULL, *remoteTableName = NULL, *p = NULL;
     /* get handle to local db*/
     rc = getDbHndl(&hndl, gbl_dbname, NULL);
@@ -713,14 +782,13 @@ int createLocalAliases(struct comdb2_partition *partition) {
         }
         free(p);
     }
-    dump_alias_info();
+    // dump_alias_info();
     cdb2_close(hndl);
     return 0;
 cleanup_aliases:
     /* close most recent handle*/
     cdb2_close(hndl);
     free(p);
-    /* TODO : IMPLEMENT BELOW */
-    //deleteLocalAliases(partition, i);
+    deleteLocalAliases(partition, i);
     return -1;
 }
