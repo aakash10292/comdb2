@@ -538,6 +538,7 @@ char *extractSchema(const char *insertQuery) {
  * create table tableName(...)
  * */
 static char *getCreateStatement(const char *insertQuery, const char *tableName) {
+    /* strip away CREATESHARDS and extract schema*/
     const char *schema = extractSchema(insertQuery);
     size_t createStatementLen = 13 + strlen(tableName) + strlen(schema) + 2 + 1; /* 13 -> "CREATE TABLE ", 2-> (, ) */
     char *createStatement = (char *)malloc(createStatementLen);
@@ -660,7 +661,6 @@ int createRemoteTables(struct comdb2_partition *partition) {
         if (rc) {
             goto cleanup_tables;
         }
-
         char *createStatement = getCreateStatement(partition->u.hash.createQuery, remoteTableName);
         if (!createStatement) {
             logmsg(LOGMSG_ERROR, "Failed to generate createQuery\n");
@@ -673,6 +673,13 @@ int createRemoteTables(struct comdb2_partition *partition) {
             logmsg(LOGMSG_ERROR, "Failed to create table %s on database %s. rc: %d, err: %s\n", remoteTableName, remoteDbName, rc, cdb2_errstr(hndl));
             goto cleanup_tables;
         }
+
+        /* Now setup catalog information on remote databases*/
+        rc = cdb2_run_statement(hndl, partition->u.hash.createQuery);
+        if (rc) {
+            logmsg(LOGMSG_ERROR, "Failed to setup partition metatdata on database %s. rc: %d, err: %s\n", remoteDbName, rc, cdb2_errstr(hndl));
+            goto cleanup_tables;
+        }
         cdb2_close(hndl);
         free(p);
     }
@@ -682,6 +689,7 @@ cleanup_tables:
     cdb2_close(hndl);
     free(p);
     deleteRemoteTables(partition, i);
+    /*TODO AAR: Also delete partition info from remote tables*/
     return -1;
 }
 int remove_alias(const char *);
