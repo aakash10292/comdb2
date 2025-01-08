@@ -15,6 +15,8 @@
 #include "sqliteInt.h"
 #if defined(SQLITE_BUILDING_FOR_COMDB2)
 #include "cdb2_constants.h"
+#include "hash_partition.h"
+#include "comdb2.h"
 int need_index_checks_for_upsert(Table *pTab, Upsert *pUpsert, int onError, int noConflict);
 int is_comdb2_index_unique(const char *tbl, char *idx);
 int gbl_sqlite_makerecord_for_comdb2 = 1;
@@ -577,7 +579,17 @@ void sqlite3Insert(
   int regRowid;         /* registers holding insert rowid */
   int regData;          /* register holding first column to insert */
   int *aRegIdx = 0;     /* One register allocated to each index */
-
+#if SQLITE_BUILDING_FOR_COMDB2
+  int regShardKey;
+  int regViewName;
+  int regTableName;
+  int regPartitionName;
+  int isHashPartition = 0;
+  int numKeys = 0;
+  char **keys = NULL;
+  const char *viewName = NULL;
+  char *partition = NULL;
+#endif
 #ifndef SQLITE_OMIT_TRIGGER
   int isView;                 /* True if attempting to insert into a view */
   Trigger *pTrigger;          /* List of triggers on pTab, if required */
@@ -698,6 +710,12 @@ void sqlite3Insert(
   ** the content of the new row, and the assembled row record.
   */
   regRowid = regIns = pParse->nMem+1;
+#if SQLITE_BUILDING_FOR_COMDB2
+  regShardKey = ++pParse->nMem;
+  regViewName = ++pParse->nMem;
+  regTableName = ++pParse->nMem;
+  regPartitionName = ++pParse->nMem;
+#endif
   pParse->nMem += pTab->nCol + 1;
   if( IsVirtual(pTab) ){
     regRowid++;
@@ -1071,6 +1089,22 @@ void sqlite3Insert(
     ** with the first column.
     */
     nHidden = 0;
+#if SQLITE_BUILDING_FOR_COMDB2
+    /* Is table a hash partition */
+    hash_view_t *view = NULL;
+    partition = sqlite3MPrintf(db, "%s.%s", db->aDb[iDb].zDbSName, pTab->zName);
+    isHashPartition = is_hash_partition_table(partition, &view);
+    //sqlite3_free(partition);
+    if (isHashPartition) {
+        logmsg(LOGMSG_USER, "%s IS A HASH PARTITOINED TABLE\n", partition);
+        viewName = hash_view_get_viewname(view);
+        keys = hash_view_get_keynames(view);
+        numKeys = hash_view_get_num_keys(view);
+        sqlite3VdbeAddOp4(v, OP_String8, 0, regShardKey, 0, "", P4_STATIC);
+    } else {
+        logmsg(LOGMSG_USER, "%s IS NOT A HASH PARTITIONED TABLE\n", partition);
+    }
+#endif
     for(i=0; i<pTab->nCol; i++){
       int iRegStore = regRowid+1+i;
       if( i==pTab->iPKey ){
@@ -1105,8 +1139,28 @@ void sqlite3Insert(
       }else{
         sqlite3ExprCode(pParse, pList->a[j].pExpr, iRegStore);
       }
+#if SQLITE_BUILDING_FOR_COMDB2
+      if (isHashPartition) {
+          for (int i=0;i<numKeys;i++){
+              if (strcmp(keys[i], pTab->aCol[i].zName)==0){
+                  logmsg(LOGMSG_USER, "Column %s is part of key. Copying the bytes\n", pTab->aCol[i].zName);
+                  /* Part of sharding key, accumulate bytes in a register*/
+                  sqlite3VdbeAddOp3(v, OP_Concat, iRegStore, regShardKey, regShardKey);
+              }
+          }
+      }
+#endif
     }
-
+#if SQLITE_BUILDING_FOR_COMDB2
+    /* Generate code to check if a hash partition insert has to be pruned */
+    if (isHashPartition) {
+        sqlite3VdbeAddOp4(v, OP_String8, 0, regViewName, 0, viewName, P4_STATIC);
+        sqlite3VdbeAddOp4(v, OP_String8, 0, regTableName, 0, partition, P4_DYNAMIC);
+        sqlite3VdbeAddOp3(v, OP_FindPartition, regViewName, regShardKey, regPartitionName);
+        //sqlite3VdbeAddOp4(v, OP_Ne, regPartitionName, endOfLoop, regTableName, NULL, SQLITE_AFF_TEXT);
+        sqlite3VdbeAddOp3(v, OP_Ne, regPartitionName, endOfLoop, regTableName);
+    }
+#endif 
     /* Generate code to check constraints and generate index keys and
     ** do the insertion.
     */

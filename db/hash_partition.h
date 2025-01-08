@@ -28,5 +28,6 @@ int hash_get_inmem_view(const char *name, hash_view_t **oView);
 int is_hash_partition(const char *name);
 int is_hash_partition_table(const char *tablename, hash_view_t **oView);
 unsigned long long hash_view_get_version(const char *name);
+char *hash_view_get_partition_from_key(struct hash_view *view, char *key);
 #endif
 

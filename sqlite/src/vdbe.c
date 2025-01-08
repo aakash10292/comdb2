@@ -26,7 +26,7 @@
 #include <pthread.h>
 #include <strings.h>
 #include <sql.h>
-
+#include "hash_partition.h"
 /* Comdb2 routines called from vdbe */
 void set_cook_fields(BtCursor *pCur, int cols);
 void sqlite3SetConversionError(void);
@@ -2438,6 +2438,8 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
   pIn3 = &aMem[pOp->p3];
   flags1 = pIn1->flags;
   flags3 = pIn3->flags;
+  if (pOp->opcode==OP_Ne && pIn1->z && pIn3->z)
+        logmsg(LOGMSG_USER, "COMPARING %s and %s \n",pIn1->z, pIn3->z);
   if( (flags1 | flags3)&MEM_Null ){
     /* One or both operands are NULL */
     if( pOp->p5 & SQLITE_NULLEQ ){
@@ -2539,6 +2541,8 @@ val_nn_done:
 #endif /* defined(SQLITE_BUILDING_FOR_COMDB2) */
     assert( pOp->p4type==P4_COLLSEQ || pOp->p4.pColl==0 );
     res = sqlite3MemCompare(pIn3, pIn1, pOp->p4.pColl);
+    if (pIn1->z && pIn3->z)
+        logmsg(LOGMSG_USER, "THE RESULT OF COMPARING %s and %s is %d\n",pIn1->z, pIn3->z ,res);
 #if defined(SQLITE_BUILDING_FOR_COMDB2)
     if( p->rc!=SQLITE_OK ){
       rc = p->rc;
@@ -8697,7 +8701,6 @@ case OP_Abortable: {
   break;
 }
 #endif
-
 #if defined(SQLITE_BUILDING_FOR_COMDB2)
 /* OpCode: OpFuncLoad * P2 * P4 *
 ** Synopsis: Load OpFunc P4 into mem[P2]
@@ -8804,6 +8807,53 @@ case OP_OpFuncNext: {            /* jump */
   int more = moreRecords(f);
   VdbeBranchTaken(more, 2);
   if( more ) goto jump_to_p2;
+  break;
+}
+
+/* OpCode: FindPartition p1 p2 p3
+ *
+ * For a given key value in p2, find the corresponding
+ * partition table in the p1 and place it in p3
+ */
+case OP_FindPartition: {
+  i64 nByte;
+
+  pIn1 = &aMem[pOp->p1];
+  pIn2 = &aMem[pOp->p2];
+  pOut = &aMem[pOp->p3];
+  /*if( (pIn1->flags | pIn2->flags) & MEM_Null ){
+    sqlite3VdbeMemSetNull(pOut);
+    break;
+  }*/
+  // if( ExpandBlob(pIn1) || ExpandBlob(pIn2) ) goto no_mem;
+  Stringify(pIn1, encoding);
+  Stringify(pIn2, encoding);
+  // nByte = pIn1->n + pIn2->n;
+  /*if( nByte>db->aLimit[SQLITE_LIMIT_LENGTH] ){
+    goto too_big;
+  }*/
+  logmsg(LOGMSG_USER, "PARTITION KEY IS : %s\n", pIn2->z);
+  struct hash_view *v = NULL;
+  hash_get_inmem_view(pIn1->z, &v);
+  assert(v != NULL);
+  char *partition = hash_view_get_partition_from_key(v, pIn2->z);
+  assert(partition != NULL);
+  logmsg(LOGMSG_USER, "GOT PARTITION AS %s\n", partition);
+  nByte = strlen(partition);
+  if( sqlite3VdbeMemGrow(pOut, (int)nByte+2, 0) ){
+    goto no_mem;
+  }
+  MemSetTypeFlag(pOut, MEM_Str);
+  /*if( pOut!=pIn2 ){
+    memcpy(pOut->z, pIn2->z, pIn2->n);
+  }*/
+  memcpy(pOut->z, partition, nByte);
+  pOut->z[nByte]=0;
+  pOut->z[nByte+1] = 0;
+  pOut->flags |= MEM_Term;
+  pOut->n = (int)nByte;
+  pOut->enc = encoding;
+  // UPDATE_MAX_BLOBSIZE(pOut);
   break;
 }
 #endif /* defined(SQLITE_BUILDING_FOR_COMDB2) */
