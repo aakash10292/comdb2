@@ -52,10 +52,10 @@ char** hash_view_get_partitions(struct hash_view *view) {
 }
 
 char *hash_view_get_partition_from_key(struct hash_view *view, char *key) {
-    logmsg(LOGMSG_USER, "%s:%d looking for %s in view %s\n", __func__, __LINE__, key, view->viewname);
+    //logmsg(LOGMSG_USER, "%s:%d looking for %s in view %s\n", __func__, __LINE__, key, view->viewname);
     ch_hash_node_t *node = ch_hash_find_node(view->partition_hash, (uint8_t *) key, strlen(key));
     if (!node) return NULL;
-    logmsg(LOGMSG_USER, "GOT THE PARTITION AS %s\n", (char*)get_node_data(node));
+    //logmsg(LOGMSG_USER, "GOT THE PARTITION AS %s\n", (char*)get_node_data(node));
     return (char*)get_node_data(node);
 }
 static void free_hash_view(hash_view_t *mView)
@@ -229,7 +229,7 @@ int is_hash_partition_table(const char *tablename, hash_view_t **oView) {
             view = (hash_view_t *)hash_next(thedb->hash_partition_views, &ent, &bkt)) {
         int n = hash_view_get_num_partitions(view);
         for(int i=0;i<n;i++){
-            logmsg(LOGMSG_USER, "COMPARING partition name %s with table %s\n", view->partitions[i], tablename);
+            //logmsg(LOGMSG_USER, "COMPARING partition name %s with table %s\n", view->partitions[i], tablename);
             if (strcmp(tablename, view->partitions[i])==0) goto found;
         }
     }

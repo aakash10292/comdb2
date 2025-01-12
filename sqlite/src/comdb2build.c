@@ -40,7 +40,7 @@ extern int gbl_ddl_cascade_drop;
 extern int gbl_legacy_schema;
 extern int gbl_permit_small_sequences;
 extern int gbl_lightweight_rename;
-
+extern char gbl_dbname[MAX_DBNAME_LENGTH];
 int gbl_view_feature = 1;
 
 extern int sqlite3GetToken(const unsigned char *z, int *tokenType);

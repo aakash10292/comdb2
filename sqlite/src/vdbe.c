@@ -2541,8 +2541,8 @@ val_nn_done:
 #endif /* defined(SQLITE_BUILDING_FOR_COMDB2) */
     assert( pOp->p4type==P4_COLLSEQ || pOp->p4.pColl==0 );
     res = sqlite3MemCompare(pIn3, pIn1, pOp->p4.pColl);
-    if (pIn1->z && pIn3->z)
-        logmsg(LOGMSG_USER, "THE RESULT OF COMPARING %s and %s is %d\n",pIn1->z, pIn3->z ,res);
+    /*if (pIn1->z && pIn3->z)
+        logmsg(LOGMSG_USER, "THE RESULT OF COMPARING %s and %s is %d\n",pIn1->z, pIn3->z ,res);*/
 #if defined(SQLITE_BUILDING_FOR_COMDB2)
     if( p->rc!=SQLITE_OK ){
       rc = p->rc;
