@@ -683,12 +683,13 @@ int createRemoteTables(struct comdb2_partition *partition) {
             goto cleanup_tables;
         }
 
-        /* Now setup catalog information on remote databases*/
+        /* Now setup catalog information on remote databases
         rc = cdb2_run_statement(hndl, partition->u.hash.createQuery);
         if (rc) {
             logmsg(LOGMSG_ERROR, "Failed to setup partition metatdata on database %s. rc: %d, err: %s\n", remoteDbName, rc, cdb2_errstr(hndl));
             goto cleanup_tables;
         }
+        */
         cdb2_close(hndl);
         free(p);
     }

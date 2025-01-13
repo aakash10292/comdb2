@@ -7809,14 +7809,9 @@ void comdb2CreateHashPartition(Parse *pParse, IdList *pColumn, IdList *pPartitio
             abort();
         }
     }
-    /* TODO: AAR -> fix this dumb hardcode. 
-     * I tried to add new sql syntax to control this behavior, 
-     * but the sqlite parse didn't like. Figure out why and remove the hardcode!*/
-    if (strcmp(gbl_dbname, "coord")==0){
-        if (createRemoteTables(partition)) {
-            free_ddl_context(pParse);
-            setError(pParse, SQLITE_ABORT, "Failed to create remote tables"); 
-        }
+    if (createRemoteTables(partition)) {
+        free_ddl_context(pParse);
+        setError(pParse, SQLITE_ABORT, "Failed to create remote tables"); 
     }
 
     if (createLocalAliases(partition)) {

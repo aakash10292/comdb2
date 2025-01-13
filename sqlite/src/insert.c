@@ -1141,8 +1141,8 @@ void sqlite3Insert(
       }
 #if SQLITE_BUILDING_FOR_COMDB2
       if (isHashPartition) {
-          for (int i=0;i<numKeys;i++){
-              if (strcmp(keys[i], pTab->aCol[i].zName)==0){
+          for (int j=0;j<numKeys;j++){
+              if (strcmp(keys[j], pTab->aCol[i].zName)==0){
                   logmsg(LOGMSG_USER, "Column %s is part of key. Copying the bytes\n", pTab->aCol[i].zName);
                   /* Part of sharding key, accumulate bytes in a register*/
                   int iTemp = sqlite3GetTempReg(pParse);
