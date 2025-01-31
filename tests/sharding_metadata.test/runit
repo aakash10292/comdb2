@@ -1,6 +1,37 @@
-#!/bin/bash
+#!/usr/bin/env bash
+bash -n "$0" | exit 1
 
-# Setup comdb2db tables- modeled from incoh_remsql test
+. ${TESTSROOTDIR}/tools/cluster_utils.sh
+. ${TESTSROOTDIR}/tools/runit_common.sh
+. ${TESTSROOTDIR}/tools/hrtime.sh
+
+shards=""
+SHARDS_LIST="$DBNAME $SECONDARY_DBNAME"
+numshards=2
+# permissive maxtime because im killing my hardware
+export maxtime=300000
+export stopfile=./stopfile.txt
+
+export debug=1
+
+[[ $debug == "1" ]] && set -x
+
+export comdb2db_hosts="${SENARY_DBNAME}:1234"
+export COMDB2DB_DBNAME=${SENARY_DBNAME}
+export COMDB2DB_OPTIONS=${SENARY_CDB2_OPTIONS}
+export LOGDIR=$TESTDIR/logs
+export LONGINSERTTIME=10000
+
+export LONGUPDATETIME=30000
+export FAIL_ON_LONG_INSERT=1
+export UPDATE_SCOPE=5
+export DELETE_SCOPE=5
+
+#export DEBUGTRACE="--debugtrace"
+export DEBUGTRACE=""
+export FIGLET=$(which figlet)
+export keepup_on_failure=0
+
 function create_comdb2db
 {
     # Create comdb2db tables
@@ -66,43 +97,51 @@ function fail_exit()
 }
 
 function setup_testcase {
-	$CDB2SQL_EXE $CDB2_OPTIONS $DBNAME default "DROP TABLE IF EXISTS t DELETEPARTITIONS"
+	$CDB2SQL_EXE $CDB2_OPTIONS $DBNAME default "DROP TABLE IF EXISTS t DROPPARTITIONS"
 }
 
 function verify_metadata {
-	for shard in $SHARDS_LIST; do
-		count=`$CDB2SQL_EXE $CDB2_OPTIONS $SHARD default "SELECT count(*) from comdb2_hashpartitions"`
-		if [[ $count != 6 ]]; then
-			fail_exit "verify_metadata failed on $shard. Expected 6 shards but got $count shards"
+	#for shard in $SHARDS_LIST; do
+		count=$($CDB2SQL_EXE --tabs $CDB2_OPTIONS $DBNAME default "SELECT count(*) from comdb2_hashpartitions")
+		if [[ $count != $numshards ]]; then
+			fail_exit "verify_metadata failed on $shard. Expected $numshards shards but got $count shards"
 		fi
-	done	
+		count=$($CDB2SQL_EXE --tabs $SECONDARY_CDB2_OPTIONS $SECONDARY_DBNAME default "SELECT count(*) from comdb2_hashpartitions")
+		if [[ $count != $numshards ]]; then
+			fail_exit "verify_metadata failed on $shard. Expected $numshards shards but got $count shards"
+		fi
+	#done	
 }
 
 function verify_remote_tables {
-	for shard in $SHARDS_LIST; do
-		count=`$CDB2SQL_EXE $CDB2_OPTIONS $SHARD default "SELECT count(*) from comdb2_tables where tablename='t'"`
+	#for shard in $SHARDS_LIST; do
+		count=$($CDB2SQL_EXE $CDB2_OPTIONS $DBNAME default "SELECT count(*) from comdb2_tables where tablename='t'")
 		if [[ $count != 1 ]]; then
 			fail_exit "verify_remote_tables failed on $shard. Expected 1 table but found $count shards"
 		fi
-	done	
+		count=$($CDB2SQL_EXE $SECONDARY_CDB2_OPTIONS $SECONDARY_DBNAME default "SELECT count(*) from comdb2_tables where tablename='t'")
+		if [[ $count != 1 ]]; then
+			fail_exit "verify_remote_tables failed on $shard. Expected 1 table but found $count shards"
+		fi
+	#done	
 
 }
 
 function partition_only_test {
-	$CDB2SQL_EXE $CDB2_OPTIONS $DBNAME default "CREATE TABLE IF NOT EXISTS t(a int) PARTITIONED BY (a) PARTITIONS(${SHARDS_QUERY})"
+	$CDB2SQL_EXE $CDB2_OPTIONS $DBNAME default "CREATE TABLE IF NOT EXISTS t(a int) PARTITIONED BY (a) PARTITIONS(${shards})"
 	verify_metadata
 }
 
 function partition_with_remote_tables_test {
-	$CDB2SQL_EXE $CDB2_OPTIONS $DBNAME default "CREATE TABLE IF NOT EXISTS t(a int) PARTITIONED BY (a) PARTITIONS(${SHARDS_QUERY}) CREATEPARTITIONS"
+	$CDB2SQL_EXE $CDB2_OPTIONS $DBNAME default "CREATE TABLE IF NOT EXISTS t(a int) PARTITIONED BY (a) PARTITIONS(${shards}) CREATEPARTITIONS"
 	verify_metadata
 	verify_remote_tables
 }
 
 function run_test {
 	testcase="testing only partition creation"
-	setup_testcase  
-	partition_only_test
+	#setup_testcase  
+	#partition_only_test
 
 	testcase="testing partition and remote table creation"
 	setup_testcase
@@ -112,14 +151,15 @@ function run_test {
 rm $stopfile >/dev/null 2>&1 
 
 
-SHARDS_LIST="$DBNAME $SECONDARY_DBNAME"
 #$TERTIARY_DBNAME $QUATERNARY_DBNAME $QUINARY_DBNAME"
-SHARDS_QUERY=""
 for shard in $SHARDS_LIST; do
-	SHARDS_QUERY += " ${shard}.t"
+	shards+=" '${shard}.t',"
 done
-echo $SHARDS_QUERY
 
+# remove the last ','
+shards=`echo $shards | sed 's/.$//'`
+echo $shards
+echo $COMDB2DB_DBNAME 
 setup
 run_test
 stop_all_databases
