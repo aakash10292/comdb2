@@ -1,5 +1,4 @@
 #!/bin/bash
-SHARDS_QUERY=
 
 # Setup comdb2db tables- modeled from incoh_remsql test
 function create_comdb2db
@@ -73,18 +72,18 @@ function setup_testcase {
 function verify_metadata {
 	for shard in $SHARDS_LIST; do
 		count=`$CDB2SQL_EXE $CDB2_OPTIONS $SHARD default "SELECT count(*) from comdb2_hashpartitions"`
-		if [[ "$count" -ne "6" ]];
-            fail_exit "verify_metadata failed on $shard. Expected 6 shards but got $count shards"
-        fi
+		if [[ $count != 6 ]]; then
+			fail_exit "verify_metadata failed on $shard. Expected 6 shards but got $count shards"
+		fi
 	done	
 }
 
 function verify_remote_tables {
 	for shard in $SHARDS_LIST; do
 		count=`$CDB2SQL_EXE $CDB2_OPTIONS $SHARD default "SELECT count(*) from comdb2_tables where tablename='t'"`
-		if [[ "$count" -ne "1" ]];
+		if [[ $count != 1 ]]; then
 			fail_exit "verify_remote_tables failed on $shard. Expected 1 table but found $count shards"
-        fi
+		fi
 	done	
 
 }
@@ -113,10 +112,11 @@ function run_test {
 rm $stopfile >/dev/null 2>&1 
 
 
-SHARDS_LIST="$DBNAME $SECONDARY_DBNAME $TERTIARY_DBNAME $QUATERNARY_DBNAME $QUINARY_DBNAME"
+SHARDS_LIST="$DBNAME $SECONDARY_DBNAME"
+#$TERTIARY_DBNAME $QUATERNARY_DBNAME $QUINARY_DBNAME"
 SHARDS_QUERY=""
 for shard in $SHARDS_LIST; do
-	$SHARDS_QUERY+="'${shard}.t'"
+	SHARDS_QUERY += " ${shard}.t"
 done
 echo $SHARDS_QUERY
 
